@@ -90,7 +90,7 @@ class BasicTransformerBlock(nn.Module):
         activation_fn: str = "geglu",
         num_embeds_ada_norm: Optional[int] = None,
         attention_bias: bool = False,
-        only_cross_attention: bool = False,
+        # only_cross_attention: bool = False,
         double_self_attention: bool = False,
         upcast_attention: bool = False,
         norm_elementwise_affine: bool = True,
@@ -118,7 +118,7 @@ class BasicTransformerBlock(nn.Module):
         self.norm_elementwise_affine = norm_elementwise_affine
         self.positional_embeddings = positional_embeddings
         self.num_positional_embeddings = num_positional_embeddings
-        self.only_cross_attention = only_cross_attention
+        # self.only_cross_attention = only_cross_attention
 
 
         self.norm_type = norm_type
@@ -137,7 +137,7 @@ class BasicTransformerBlock(nn.Module):
             dim_head=attention_head_dim,
             dropout=dropout,
             bias=attention_bias,
-            cross_attention_dim=cross_attention_dim if only_cross_attention else None,
+            cross_attention_dim=None, #cross_attention_dim if only_cross_attention else None,
             upcast_attention=upcast_attention,
             out_bias=attention_out_bias,
         )
@@ -204,7 +204,7 @@ class BasicTransformerBlock(nn.Module):
 
         attn_output = self.attn1(
             norm_hidden_states,
-            encoder_hidden_states=encoder_hidden_states if self.only_cross_attention else None,
+            encoder_hidden_states=None, #encoder_hidden_states if self.only_cross_attention else None,
             attention_mask=attention_mask,
             **cross_attention_kwargs,
         )
@@ -426,7 +426,7 @@ class Attention(nn.Module):
         added_proj_bias: Optional[bool] = True,
         out_bias: bool = True,
         scale_qk: bool = True,
-        only_cross_attention: bool = False,
+        # only_cross_attention: bool = False,
         eps: float = 1e-5,
         rescale_output_factor: float = 1.0,
         residual_connection: bool = False,
@@ -466,12 +466,12 @@ class Attention(nn.Module):
         self.sliceable_head_dim = heads
 
         self.added_kv_proj_dim = added_kv_proj_dim
-        self.only_cross_attention = only_cross_attention
+        # self.only_cross_attention = only_cross_attention
 
-        if self.added_kv_proj_dim is None and self.only_cross_attention:
-            raise ValueError(
-                "`only_cross_attention` can only be set to True if `added_kv_proj_dim` is not None. Make sure to set either `only_cross_attention=False` or define `added_kv_proj_dim`."
-            )
+        # if self.added_kv_proj_dim is None and self.only_cross_attention:
+        #     raise ValueError(
+        #         "`only_cross_attention` can only be set to True if `added_kv_proj_dim` is not None. Make sure to set either `only_cross_attention=False` or define `added_kv_proj_dim`."
+        #     )
 
         self.group_norm = None
         self.spatial_norm = None
@@ -479,6 +479,8 @@ class Attention(nn.Module):
         self.norm_k = None
 
         # cross_attention_dim == 1024 or None
+        assert cross_attention_norm == None
+
         if cross_attention_norm is None:
             self.norm_cross = None
         elif cross_attention_norm == "layer_norm":
@@ -504,29 +506,32 @@ class Attention(nn.Module):
 
         self.to_q = nn.Linear(query_dim, self.inner_dim, bias=bias)
 
-        if not self.only_cross_attention:
-            # only relevant for the `AddedKVProcessor` classes
-            self.to_k = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
-            self.to_v = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
-        else:
-            self.to_k = None
-            self.to_v = None
+        # if not self.only_cross_attention:
+        #     # only relevant for the `AddedKVProcessor` classes
+        #     self.to_k = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
+        #     self.to_v = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
+        # else:
+        #     pdb.set_trace()
+        #     self.to_k = None
+        #     self.to_v = None
+        self.to_k = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
+        self.to_v = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
+
 
         self.added_proj_bias = added_proj_bias
-        if self.added_kv_proj_dim is not None:
-            self.add_k_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
-            self.add_v_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
-            # if self.context_pre_only is not None:
-            #     self.add_q_proj = nn.Linear(added_kv_proj_dim, self.inner_dim, bias=added_proj_bias)
+        # if self.added_kv_proj_dim is not None:
+        #     self.add_k_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
+        #     self.add_v_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
+        #     # if self.context_pre_only is not None:
+        #     #     self.add_q_proj = nn.Linear(added_kv_proj_dim, self.inner_dim, bias=added_proj_bias)
 
         if not self.pre_only:
             self.to_out = nn.ModuleList([])
             self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=out_bias))
             self.to_out.append(nn.Dropout(dropout))
+        else:
+            pdb.set_trace()
 
-        # if self.context_pre_only is not None and not self.context_pre_only:
-        #     pdb.set_trace()
-        #     self.to_add_out = nn.Linear(self.inner_dim, self.out_dim, bias=out_bias)
 
         self.norm_added_q = None
         self.norm_added_k = None
@@ -1027,9 +1032,9 @@ class AttnProcessor2_0:
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
-        elif attn.norm_cross:
-            pdb.set_trace()
-            encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
+        # elif attn.norm_cross:
+        #     pdb.set_trace()
+        #     encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
 
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
@@ -1067,13 +1072,13 @@ class AttnProcessor2_0:
             pdb.set_trace()
             hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
-        assert attn.residual_connection == None
-        if attn.residual_connection:
-            pdb.set_trace()
-            hidden_states = hidden_states + residual
+        assert attn.residual_connection == False
+        # if attn.residual_connection:
+        #     pdb.set_trace()
+        #     hidden_states = hidden_states + residual
 
-        assert attn.rescale_output_factor == 1.0
-        hidden_states = hidden_states / attn.rescale_output_factor
+        # assert attn.rescale_output_factor == 1.0
+        # hidden_states = hidden_states / attn.rescale_output_factor
 
         return hidden_states
 
