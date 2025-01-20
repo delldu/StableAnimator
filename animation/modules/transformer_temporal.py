@@ -86,7 +86,7 @@ class BasicTransformerBlock(nn.Module):
         num_attention_heads: int,
         attention_head_dim: int,
         dropout=0.0,
-        cross_attention_dim: Optional[int] = None,
+        cross_attention_dim  = 1024,
         activation_fn: str = "geglu",
         num_embeds_ada_norm: Optional[int] = None,
         attention_bias: bool = False,
@@ -208,6 +208,7 @@ class BasicTransformerBlock(nn.Module):
                 out_bias=attention_out_bias,
             )  # is self-attn if encoder_hidden_states is none
         else:
+            pdb.set_trace()
             if norm_type == "ada_norm_single":  # For Latte
                 self.norm2 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
             else:
@@ -215,20 +216,21 @@ class BasicTransformerBlock(nn.Module):
             self.attn2 = None
 
         # 3. Feed-forward
-        if norm_type == "ada_norm_continuous":
-            self.norm3 = AdaLayerNormContinuous(
-                dim,
-                ada_norm_continous_conditioning_embedding_dim,
-                norm_elementwise_affine,
-                norm_eps,
-                ada_norm_bias,
-                "layer_norm",
-            )
+        # if norm_type == "ada_norm_continuous":
+        #     self.norm3 = AdaLayerNormContinuous(
+        #         dim,
+        #         ada_norm_continous_conditioning_embedding_dim,
+        #         norm_elementwise_affine,
+        #         norm_eps,
+        #         ada_norm_bias,
+        #         "layer_norm",
+        #     )
 
-        elif norm_type in ["ada_norm_zero", "ada_norm", "layer_norm"]:
-            self.norm3 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
-        elif norm_type == "layer_norm_i2vgen":
-            self.norm3 = None
+        # elif norm_type in ["ada_norm_zero", "ada_norm", "layer_norm"]:
+        #     self.norm3 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
+        # elif norm_type == "layer_norm_i2vgen":
+        #     self.norm3 = None
+        self.norm3 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
 
         self.ff = FeedForward(
             dim,
@@ -240,12 +242,12 @@ class BasicTransformerBlock(nn.Module):
         )
 
         # 4. Fuser
-        if attention_type == "gated" or attention_type == "gated-text-image":
-            self.fuser = GatedSelfAttentionDense(dim, cross_attention_dim, num_attention_heads, attention_head_dim)
+        # if attention_type == "gated" or attention_type == "gated-text-image":
+        #     self.fuser = GatedSelfAttentionDense(dim, cross_attention_dim, num_attention_heads, attention_head_dim)
 
-        # 5. Scale-shift for PixArt-Alpha.
-        if norm_type == "ada_norm_single":
-            self.scale_shift_table = nn.Parameter(torch.randn(6, dim) / dim**0.5)
+        # # 5. Scale-shift for PixArt-Alpha.
+        # if norm_type == "ada_norm_single":
+        #     self.scale_shift_table = nn.Parameter(torch.randn(6, dim) / dim**0.5)
 
         # let chunk size default to None
         self._chunk_size = None
@@ -275,24 +277,25 @@ class BasicTransformerBlock(nn.Module):
         # 0. Self-Attention
         batch_size = hidden_states.shape[0]
 
-        if self.norm_type == "ada_norm":
-            norm_hidden_states = self.norm1(hidden_states, timestep)
-        elif self.norm_type == "ada_norm_zero":
-            norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(
-                hidden_states, timestep, class_labels, hidden_dtype=hidden_states.dtype
-            )
-        elif self.norm_type in ["layer_norm", "layer_norm_i2vgen"]:
-            norm_hidden_states = self.norm1(hidden_states)
-        elif self.norm_type == "ada_norm_continuous":
-            norm_hidden_states = self.norm1(hidden_states, added_cond_kwargs["pooled_text_emb"])
-        elif self.norm_type == "ada_norm_single":
-            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-                self.scale_shift_table[None] + timestep.reshape(batch_size, 6, -1)
-            ).chunk(6, dim=1)
-            norm_hidden_states = self.norm1(hidden_states)
-            norm_hidden_states = norm_hidden_states * (1 + scale_msa) + shift_msa
-        else:
-            raise ValueError("Incorrect norm used")
+        # if self.norm_type == "ada_norm":
+        #     norm_hidden_states = self.norm1(hidden_states, timestep)
+        # elif self.norm_type == "ada_norm_zero":
+        #     norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(
+        #         hidden_states, timestep, class_labels, hidden_dtype=hidden_states.dtype
+        #     )
+        # elif self.norm_type in ["layer_norm", "layer_norm_i2vgen"]:
+        #     norm_hidden_states = self.norm1(hidden_states)
+        # elif self.norm_type == "ada_norm_continuous":
+        #     norm_hidden_states = self.norm1(hidden_states, added_cond_kwargs["pooled_text_emb"])
+        # elif self.norm_type == "ada_norm_single":
+        #     shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+        #         self.scale_shift_table[None] + timestep.reshape(batch_size, 6, -1)
+        #     ).chunk(6, dim=1)
+        #     norm_hidden_states = self.norm1(hidden_states)
+        #     norm_hidden_states = norm_hidden_states * (1 + scale_msa) + shift_msa
+        # else:
+        #     raise ValueError("Incorrect norm used")
+        norm_hidden_states = self.norm1(hidden_states)
 
         # if self.pos_embed is not None:
         #     norm_hidden_states = self.pos_embed(norm_hidden_states)
@@ -308,10 +311,10 @@ class BasicTransformerBlock(nn.Module):
             **cross_attention_kwargs,
         )
 
-        if self.norm_type == "ada_norm_zero":
-            attn_output = gate_msa.unsqueeze(1) * attn_output
-        elif self.norm_type == "ada_norm_single":
-            attn_output = gate_msa * attn_output
+        # if self.norm_type == "ada_norm_zero":
+        #     attn_output = gate_msa.unsqueeze(1) * attn_output
+        # elif self.norm_type == "ada_norm_single":
+        #     attn_output = gate_msa * attn_output
 
         hidden_states = attn_output + hidden_states
         if hidden_states.ndim == 4:
@@ -350,17 +353,18 @@ class BasicTransformerBlock(nn.Module):
 
         # 4. Feed-forward
         # i2vgen doesn't have this norm 🤷‍♂️
-        if self.norm_type == "ada_norm_continuous":
-            norm_hidden_states = self.norm3(hidden_states, added_cond_kwargs["pooled_text_emb"])
-        elif not self.norm_type == "ada_norm_single":
-            norm_hidden_states = self.norm3(hidden_states)
+        # if self.norm_type == "ada_norm_continuous":
+        #     norm_hidden_states = self.norm3(hidden_states, added_cond_kwargs["pooled_text_emb"])
+        # elif not self.norm_type == "ada_norm_single":
+        #     norm_hidden_states = self.norm3(hidden_states)
+        norm_hidden_states = self.norm3(hidden_states)
 
-        if self.norm_type == "ada_norm_zero":
-            norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        # if self.norm_type == "ada_norm_zero":
+        #     norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
 
-        if self.norm_type == "ada_norm_single":
-            norm_hidden_states = self.norm2(hidden_states)
-            norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
+        # if self.norm_type == "ada_norm_single":
+        #     norm_hidden_states = self.norm2(hidden_states)
+        #     norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
 
         if self._chunk_size is not None:
             # "feed_forward_chunk_size" can be used to save memory
@@ -368,10 +372,10 @@ class BasicTransformerBlock(nn.Module):
         else:
             ff_output = self.ff(norm_hidden_states)
 
-        if self.norm_type == "ada_norm_zero":
-            ff_output = gate_mlp.unsqueeze(1) * ff_output
-        elif self.norm_type == "ada_norm_single":
-            ff_output = gate_mlp * ff_output
+        # if self.norm_type == "ada_norm_zero":
+        #     ff_output = gate_mlp.unsqueeze(1) * ff_output
+        # elif self.norm_type == "ada_norm_single":
+        #     ff_output = gate_mlp * ff_output
 
         hidden_states = ff_output + hidden_states
         if hidden_states.ndim == 4:
@@ -396,7 +400,7 @@ class TransformerSpatioTemporalModel(nn.Module):
         num_tokens=4,
     ):
         super().__init__()
-        print("cross_attention_dim1: ", cross_attention_dim)
+        # print("cross_attention_dim1: ", cross_attention_dim)
 
         inner_dim = num_attention_heads * attention_head_dim
         self.inner_dim = inner_dim
@@ -603,37 +607,41 @@ class Attention(nn.Module):
                 "`only_cross_attention` can only be set to True if `added_kv_proj_dim` is not None. Make sure to set either `only_cross_attention=False` or define `added_kv_proj_dim`."
             )
 
-        if norm_num_groups is not None:
-            pdb.set_trace()
-            self.group_norm = nn.GroupNorm(num_channels=query_dim, num_groups=norm_num_groups, eps=eps, affine=True)
-        else:
-            self.group_norm = None
+        # if norm_num_groups is not None:
+        #     pdb.set_trace()
+        #     self.group_norm = nn.GroupNorm(num_channels=query_dim, num_groups=norm_num_groups, eps=eps, affine=True)
+        # else:
+        #     self.group_norm = None
+        self.group_norm = None
 
-        if spatial_norm_dim is not None:
-            pdb.set_trace()
-            self.spatial_norm = SpatialNorm(f_channels=query_dim, zq_channels=spatial_norm_dim)
-        else:
-            self.spatial_norm = None
+        # if spatial_norm_dim is not None:
+        #     pdb.set_trace()
+        #     self.spatial_norm = SpatialNorm(f_channels=query_dim, zq_channels=spatial_norm_dim)
+        # else:
+        #     self.spatial_norm = None
+        self.spatial_norm = None
 
         assert qk_norm == None
-        if qk_norm is None:
-            self.norm_q = None
-            self.norm_k = None
-        elif qk_norm == "layer_norm":
-            self.norm_q = nn.LayerNorm(dim_head, eps=eps)
-            self.norm_k = nn.LayerNorm(dim_head, eps=eps)
-        elif qk_norm == "fp32_layer_norm":
-            self.norm_q = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
-            self.norm_k = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
-        elif qk_norm == "layer_norm_across_heads":
-            # Lumina applys qk norm across all heads
-            self.norm_q = nn.LayerNorm(dim_head * heads, eps=eps)
-            self.norm_k = nn.LayerNorm(dim_head * kv_heads, eps=eps)
-        elif qk_norm == "rms_norm":
-            self.norm_q = RMSNorm(dim_head, eps=eps)
-            self.norm_k = RMSNorm(dim_head, eps=eps)
-        else:
-            raise ValueError(f"unknown qk_norm: {qk_norm}. Should be None or 'layer_norm'")
+        # if qk_norm is None:
+        #     self.norm_q = None
+        #     self.norm_k = None
+        # elif qk_norm == "layer_norm":
+        #     self.norm_q = nn.LayerNorm(dim_head, eps=eps)
+        #     self.norm_k = nn.LayerNorm(dim_head, eps=eps)
+        # elif qk_norm == "fp32_layer_norm":
+        #     self.norm_q = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
+        #     self.norm_k = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
+        # elif qk_norm == "layer_norm_across_heads":
+        #     # Lumina applys qk norm across all heads
+        #     self.norm_q = nn.LayerNorm(dim_head * heads, eps=eps)
+        #     self.norm_k = nn.LayerNorm(dim_head * kv_heads, eps=eps)
+        # elif qk_norm == "rms_norm":
+        #     self.norm_q = RMSNorm(dim_head, eps=eps)
+        #     self.norm_k = RMSNorm(dim_head, eps=eps)
+        # else:
+        #     raise ValueError(f"unknown qk_norm: {qk_norm}. Should be None or 'layer_norm'")
+        self.norm_q = None
+        self.norm_k = None
 
         if cross_attention_norm is None:
             self.norm_cross = None
@@ -1354,7 +1362,7 @@ class TemporalBasicTransformerBlock(nn.Module):
         time_mix_inner_dim: int,
         num_attention_heads: int,
         attention_head_dim: int,
-        cross_attention_dim: Optional[int] = None,
+        cross_attention_dim: = 1024,
     ):
         super().__init__()
         assert cross_attention_dim is not None
