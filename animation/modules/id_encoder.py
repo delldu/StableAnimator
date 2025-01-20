@@ -2,6 +2,8 @@ import math
 import torch
 import torch.nn as nn
 from diffusers.models.modeling_utils import ModelMixin
+import pdb
+import todos
 
 def reshape_tensor(x, heads):
     bs, length, width = x.shape
@@ -11,12 +13,14 @@ def reshape_tensor(x, heads):
     return x
 
 class PerceiverAttention(nn.Module):
-    def __init__(self, *, dim, dim_head=64, heads=8):
+    def __init__(self, *, dim=1024, dim_head=64, heads=16):
         super().__init__()
+
         self.scale = dim_head**-0.5
-        self.dim_head = dim_head
+        self.dim_head = dim_head # 64
         self.heads = heads
-        inner_dim = dim_head * heads
+        inner_dim = dim_head * heads # 1024
+        assert inner_dim == 1024
 
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
@@ -24,16 +28,9 @@ class PerceiverAttention(nn.Module):
         self.to_q = nn.Linear(dim, inner_dim, bias=False)
         self.to_kv = nn.Linear(dim, inner_dim * 2, bias=False)
         self.to_out = nn.Linear(inner_dim, dim, bias=False)
+        # pdb.set_trace()
 
     def forward(self, x, latents):
-        """
-        Args:
-            x (torch.Tensor): image features
-                shape (b, n1, D)
-            latent (torch.Tensor): latent features
-                shape (b, n2, D)
-        """
-
         x = self.norm1(x)
         latents = self.norm2(latents)
 
@@ -54,6 +51,7 @@ class PerceiverAttention(nn.Module):
         out = weight @ v
 
         out = out.permute(0, 2, 1, 3).reshape(b, l, -1)
+        # pdb.set_trace()
 
         return self.to_out(out)
     
@@ -69,16 +67,17 @@ def FeedForward(dim, mult=4):
 class FacePerceiver(torch.nn.Module):
     def __init__(
         self,
-        dim=768,
+        dim=1024,
         depth=4,
         dim_head=64,
         heads=16,
-        embedding_dim=1280,
-        output_dim=768,
+        embedding_dim=1024,
+        output_dim=1024,
         ff_mult=4,
     ):
         super().__init__()
-        
+        assert depth == 4
+
         self.proj_in = torch.nn.Linear(embedding_dim, dim)
         self.proj_out = torch.nn.Linear(dim, output_dim)
         self.norm_out = torch.nn.LayerNorm(output_dim)
@@ -93,10 +92,6 @@ class FacePerceiver(torch.nn.Module):
                 )
             )
 
-        nn.init.constant_(self.proj_out.weight, 0)
-        if self.proj_out.bias is not None:
-            nn.init.constant_(self.proj_out.bias, 0)
-
     def forward(self, latents, x):
         x = self.proj_in(x)
         for attn, ff in self.layers:
@@ -105,10 +100,15 @@ class FacePerceiver(torch.nn.Module):
         latents = self.proj_out(latents)
         return self.norm_out(latents)
 
-
 class FusionFaceId(ModelMixin):
-    def __init__(self, cross_attention_dim=768, id_embeddings_dim=512, clip_embeddings_dim=1024, num_tokens=4):
+# class FusionFaceId(nn.Module):
+    def __init__(self, 
+        cross_attention_dim=1024, 
+        id_embeddings_dim=512, 
+        clip_embeddings_dim=1024, 
+        num_tokens=4):
         super().__init__()
+
         self.cross_attention_dim = cross_attention_dim
         self.num_tokens = num_tokens
 
@@ -124,18 +124,26 @@ class FusionFaceId(ModelMixin):
             dim=cross_attention_dim,
             depth=4,
             dim_head=64,
-            heads=cross_attention_dim // 64,
+            heads=cross_attention_dim // 64, # 16
             embedding_dim=clip_embeddings_dim,
             output_dim=cross_attention_dim,
             ff_mult=4,
         )
-    
+        # pdb.set_trace()
+
 
     def forward(self, id_embeds, clip_embeds, shortcut=False, scale=1.0):
+        # tensor [id_embeds] size: [1, 512], min: -3.173828, max: 2.986328, mean: 0.00991
+        # tensor [clip_embeds] size: [1, 1, 1024], min: -5.863281, max: 6.507812, mean: 0.004285
+        assert shortcut == False
+        assert scale == 1.0
+
         x = self.proj(id_embeds)
         x = x.reshape(-1, self.num_tokens, self.cross_attention_dim)
         x = self.norm(x) 
         out = self.fusion_model(x, clip_embeds)
         if shortcut:
             out = x + scale * out
+
+        # tensor [out] size: [1, 4, 1024], min: -14.492188, max: 14.453125, mean: 3.8e-05
         return out

@@ -1,10 +1,8 @@
-from time import process_time_ns
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from diffusers.models.lora import LoRALinearLayer
 from diffusers.utils.import_utils import is_xformers_available
+import pdb
 
 if is_xformers_available():
     import xformers
@@ -22,16 +20,24 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
             scale=1.0,
             num_tokens=4):
         super().__init__()
+        # hidden_size = 320
+        # cross_attention_dim = 1024
+        # rank = 128
+        # network_alpha = None
+        # lora_scale = 1.0
+        # scale = 1.0
+        # num_tokens = 4
 
-        self.hidden_size = hidden_size
-        self.cross_attention_dim = cross_attention_dim
+
         self.scale = scale
-
         self.id_to_k = nn.Linear(cross_attention_dim or hidden_size, hidden_size, bias=False)
         self.id_to_v = nn.Linear(cross_attention_dim or hidden_size, hidden_size, bias=False)
 
-        self.lora_scale = lora_scale
         self.num_tokens = num_tokens
+        # self = AnimationIDAttnNormalizedProcessor(
+        #   (id_to_k): Linear(in_features=1024, out_features=320, bias=False)
+        #   (id_to_v): Linear(in_features=1024, out_features=320, bias=False)
+        # )
 
     def __call__(
             self,
@@ -42,55 +48,49 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
             temb=None,
             scale=1.0,
     ):
-
-        # hidden_states = hidden_states.to(encoder_hidden_states.dtype)
-
+        # (Pdb) attn
+        # Attention(
+        #   (to_q): Linear(in_features=320, out_features=320, bias=False)
+        #   (to_k): Linear(in_features=1024, out_features=320, bias=False)
+        #   (to_v): Linear(in_features=1024, out_features=320, bias=False)
+        #   (to_out): ModuleList(
+        #     (0): Linear(in_features=320, out_features=320, bias=True)
+        #     (1): Dropout(p=0.0, inplace=False)
+        #   )
+        #   (processor): AnimationIDAttnNormalizedProcessor(
+        #     (id_to_k): Linear(in_features=1024, out_features=320, bias=False)
+        #     (id_to_v): Linear(in_features=1024, out_features=320, bias=False)
+        #   )
+        # )
+        assert hidden_states is not None
+        assert encoder_hidden_states is not None
+        assert attention_mask == None
+        assert temb == None
+        assert scale == 1.0
+        
         residual = hidden_states
-
-        if attn.spatial_norm is not None:
-            hidden_states = attn.spatial_norm(hidden_states, temb)
-
         input_ndim = hidden_states.ndim
-
-        if input_ndim == 4:
-            batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
         batch_size, sequence_length, _ = (
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
 
+        assert attention_mask == None
         attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-
-        if attn.group_norm is not None:
-            hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
+        assert attention_mask == None
 
         query = attn.to_q(hidden_states)
 
-        # print(attn.heads) # 5
-        # print(batch_size) # 21
-        # print(encoder_hidden_states.size()) # [21, 5, 1024]
-        # print(self.num_tokens) # 4
-
         encoder_hidden_states = encoder_hidden_states.to(hidden_states.dtype)
 
-        if encoder_hidden_states is None:
-            encoder_hidden_states = hidden_states
-        else:
-            end_pos = encoder_hidden_states.shape[1] - self.num_tokens
-            encoder_hidden_states, ip_hidden_states = (
-                encoder_hidden_states[:, :end_pos, :],
-                encoder_hidden_states[:, end_pos:, :],
-            )
-            if attn.norm_cross:
-                encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
+        end_pos = encoder_hidden_states.shape[1] - self.num_tokens
+        encoder_hidden_states, ip_hidden_states = (
+            encoder_hidden_states[:, :end_pos, :],
+            encoder_hidden_states[:, end_pos:, :],
+        )
 
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
-
-        # print(query.size()) # [21, 4096, 320]
-        # print(key.size()) # [21, 1, 320]
-        # print(value.size()) # [21, 1, 320]
 
         inner_dim = key.shape[-1]
         head_dim = inner_dim // attn.heads
@@ -102,7 +102,8 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         key = key.to(query.dtype)
         value = value.to(query.dtype)
 
-        if is_xformers_available():
+        assert attention_mask == None
+        if is_xformers_available(): # True
             ### xformers
             hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=attention_mask)
             hidden_states = hidden_states.to(query.dtype)
@@ -113,9 +114,6 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
 
         hidden_states = attn.batch_to_head_dim(hidden_states)
 
-        # print("==========================This is AnimationIDAttnProcessor==========================")
-        # print(hidden_states.size()) # [21, 4096, 320]
-
         ip_key = self.id_to_k(ip_hidden_states)
         ip_value = self.id_to_v(ip_hidden_states)
 
@@ -124,7 +122,7 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         ip_key = ip_key.to(query.dtype)
         ip_value = ip_value.to(query.dtype)
 
-        if is_xformers_available():
+        if is_xformers_available(): # True
             ### xformers
             ip_hidden_states = xformers.ops.memory_efficient_attention(query, ip_key, ip_value, attn_bias=None)
             ip_hidden_states = ip_hidden_states.to(query.dtype)
@@ -140,13 +138,5 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         hidden_states = hidden_states + self.scale * ip_hidden_states
         hidden_states = attn.to_out[0](hidden_states)
         hidden_states = attn.to_out[1](hidden_states)
-
-        if input_ndim == 4:
-            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
-
-        if attn.residual_connection:
-            hidden_states = hidden_states + residual
-
-        hidden_states = hidden_states / attn.rescale_output_factor
 
         return hidden_states

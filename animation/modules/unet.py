@@ -1,33 +1,124 @@
-from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, Union
 
+import math
 import torch
 import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import UNet2DConditionLoadersMixin
-from diffusers.models.attention_processor import CROSS_ATTENTION_PROCESSORS, AttentionProcessor, AttnProcessor
-from diffusers.models.embeddings import TimestepEmbedding, Timesteps
+
+
+
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.utils import BaseOutput, logging
 
 from animation.modules.unet_3d_blocks import get_down_block, UNetMidBlockSpatioTemporal, get_up_block
-# from diffusers.models.unets.unet_3d_blocks import get_down_block, get_up_block, UNetMidBlockSpatioTemporal
+import pdb
+import todos
+
+# from diffusers.utils import logging
+# logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
-logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+def get_timestep_embedding(
+    timesteps: torch.Tensor,
+    embedding_dim: int,
+    flip_sin_to_cos: bool = False,
+    downscale_freq_shift: float = 1,
+    scale: float = 1,
+    max_period: int = 10000,
+):
+
+    assert len(timesteps.shape) == 1, "Timesteps should be a 1d-array"
+
+    half_dim = embedding_dim // 2
+    exponent = -math.log(max_period) * torch.arange(
+        start=0, end=half_dim, dtype=torch.float32, device=timesteps.device
+    )
+    exponent = exponent / (half_dim - downscale_freq_shift)
+
+    emb = torch.exp(exponent)
+    emb = timesteps[:, None].float() * emb[None, :]
+
+    # scale embeddings
+    emb = scale * emb
+
+    # concat sine and cosine embeddings
+    emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)
+
+    # flip sine and cosine embeddings
+    if flip_sin_to_cos:
+        emb = torch.cat([emb[:, half_dim:], emb[:, :half_dim]], dim=-1)
+
+    # zero pad
+    if embedding_dim % 2 == 1:
+        emb = torch.nn.functional.pad(emb, (0, 1, 0, 0))
+    return emb
 
 
-@dataclass
-class UNetSpatioTemporalConditionOutput(BaseOutput):
-    """
-    The output of [`UNetSpatioTemporalConditionModel`].
+class Timesteps(nn.Module):
+    def __init__(self, num_channels: int, flip_sin_to_cos: bool, downscale_freq_shift: float, scale: int = 1):
+        super().__init__()
+        self.num_channels = num_channels
+        self.flip_sin_to_cos = flip_sin_to_cos
+        self.downscale_freq_shift = downscale_freq_shift
+        self.scale = scale
 
-    Args:
-        sample (`torch.FloatTensor` of shape `(batch_size, num_frames, num_channels, height, width)`):
-            The hidden states output conditioned on `encoder_hidden_states` input. Output of last layer of model.
-    """
+    def forward(self, timesteps):
+        t_emb = get_timestep_embedding(
+            timesteps,
+            self.num_channels,
+            flip_sin_to_cos=self.flip_sin_to_cos,
+            downscale_freq_shift=self.downscale_freq_shift,
+            scale=self.scale,
+        )
+        return t_emb
 
-    sample: torch.FloatTensor = None
+
+class TimestepEmbedding(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        time_embed_dim: int,
+        act_fn: str = "silu",
+        out_dim: int = None,
+        post_act_fn: Optional[str] = None,
+        cond_proj_dim=None,
+        sample_proj_bias=True,
+    ):
+        super().__init__()
+
+        self.linear_1 = nn.Linear(in_channels, time_embed_dim, sample_proj_bias)
+
+        # if cond_proj_dim is not None:
+        #     self.cond_proj = nn.Linear(cond_proj_dim, in_channels, bias=False)
+        # else:
+        #     self.cond_proj = None
+
+        self.act = nn.SiLU() # get_activation(act_fn)
+
+        if out_dim is not None:
+            time_embed_dim_out = out_dim
+        else:
+            time_embed_dim_out = time_embed_dim
+        self.linear_2 = nn.Linear(time_embed_dim, time_embed_dim_out, sample_proj_bias)
+
+        # if post_act_fn is None:
+        #     self.post_act = None
+        # else:
+        #     self.post_act = get_activation(post_act_fn)
+
+    def forward(self, sample, condition=None):
+        # if condition is not None:
+        #     sample = sample + self.cond_proj(condition)
+        sample = self.linear_1(sample)
+
+        if self.act is not None:
+            sample = self.act(sample)
+
+        sample = self.linear_2(sample)
+
+        # if self.post_act is not None:
+        #     sample = self.post_act(sample)
+        return sample
 
 
 class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
@@ -37,35 +128,6 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
 
     This model inherits from [`ModelMixin`]. Check the superclass documentation for it's generic methods implemented
     for all models (such as downloading or saving).
-
-    Parameters:
-        sample_size (`int` or `Tuple[int, int]`, *optional*, defaults to `None`):
-            Height and width of input/output sample.
-        in_channels (`int`, *optional*, defaults to 8): Number of channels in the input sample.
-        out_channels (`int`, *optional*, defaults to 4): Number of channels in the output.
-        down_block_types (`Tuple[str]`, *optional*, defaults to `("CrossAttnDownBlockSpatioTemporal", 
-            "CrossAttnDownBlockSpatioTemporal", "CrossAttnDownBlockSpatioTemporal", "DownBlockSpatioTemporal")`):
-            The tuple of downsample blocks to use.
-        up_block_types (`Tuple[str]`, *optional*, defaults to `("UpBlockSpatioTemporal", 
-            "CrossAttnUpBlockSpatioTemporal", "CrossAttnUpBlockSpatioTemporal", "CrossAttnUpBlockSpatioTemporal")`):
-            The tuple of upsample blocks to use.
-        block_out_channels (`Tuple[int]`, *optional*, defaults to `(320, 640, 1280, 1280)`):
-            The tuple of output channels for each block.
-        addition_time_embed_dim: (`int`, defaults to 256):
-            Dimension to to encode the additional time ids.
-        projection_class_embeddings_input_dim (`int`, defaults to 768):
-            The dimension of the projection of encoded `added_time_ids`.
-        layers_per_block (`int`, *optional*, defaults to 2): The number of layers per block.
-        cross_attention_dim (`int` or `Tuple[int]`, *optional*, defaults to 1280):
-            The dimension of the cross attention features.
-        transformer_layers_per_block (`int`, `Tuple[int]`, or `Tuple[Tuple]` , *optional*, defaults to 1):
-            The number of transformer blocks of type [`~models.attention.BasicTransformerBlock`]. Only relevant for
-            [`~models.unet_3d_blocks.CrossAttnDownBlockSpatioTemporal`], 
-            [`~models.unet_3d_blocks.CrossAttnUpBlockSpatioTemporal`],
-            [`~models.unet_3d_blocks.UNetMidBlockSpatioTemporal`].
-        num_attention_heads (`int`, `Tuple[int]`, defaults to `(5, 10, 10, 20)`):
-            The number of attention heads.
-        dropout (`float`, *optional*, defaults to 0.0): The dropout probability to use.
     """
 
     _supports_gradient_checkpointing = True
@@ -73,78 +135,47 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
     @register_to_config
     def __init__(
             self,
-            sample_size: Optional[int] = None,
-            in_channels: int = 8,
-            out_channels: int = 4,
-            down_block_types: Tuple[str] = (
+            sample_size = 96,
+            in_channels = 8,
+            out_channels = 4,
+            down_block_types = (
                     "CrossAttnDownBlockSpatioTemporal",
                     "CrossAttnDownBlockSpatioTemporal",
                     "CrossAttnDownBlockSpatioTemporal",
                     "DownBlockSpatioTemporal",
             ),
-            up_block_types: Tuple[str] = (
+            up_block_types = (
                     "UpBlockSpatioTemporal",
                     "CrossAttnUpBlockSpatioTemporal",
                     "CrossAttnUpBlockSpatioTemporal",
                     "CrossAttnUpBlockSpatioTemporal",
             ),
-            block_out_channels: Tuple[int] = (320, 640, 1280, 1280),
-            addition_time_embed_dim: int = 256,
-            projection_class_embeddings_input_dim: int = 768,
-            layers_per_block: Union[int, Tuple[int]] = 2,
-            cross_attention_dim: Union[int, Tuple[int]] = 1024,
-            transformer_layers_per_block: Union[int, Tuple[int], Tuple[Tuple]] = 1,
-            num_attention_heads: Union[int, Tuple[int]] = (5, 10, 10, 20),
-            num_frames: int = 25,
+            block_out_channels  = (320, 640, 1280, 1280),
+            addition_time_embed_dim = 256,
+            projection_class_embeddings_input_dim = 768,
+            layers_per_block = [2, 2, 2, 2],
+            cross_attention_dim = (1024, 1024, 1024, 1024),
+            transformer_layers_per_block = [1, 1, 1, 1],
+            num_attention_heads  = (5, 10, 20, 20),
+            num_frames = 25,
     ):
         super().__init__()
-
-        self.sample_size = sample_size
-
-        # Check inputs
-        if len(down_block_types) != len(up_block_types):
-            raise ValueError(
-                f"Must provide the same number of `down_block_types` as `up_block_types`. " \
-                f"`down_block_types`: {down_block_types}. `up_block_types`: {up_block_types}."
-            )
-
-        if len(block_out_channels) != len(down_block_types):
-            raise ValueError(
-                f"Must provide the same number of `block_out_channels` as `down_block_types`. " \
-                f"`block_out_channels`: {block_out_channels}. `down_block_types`: {down_block_types}."
-            )
-
-        if not isinstance(num_attention_heads, int) and len(num_attention_heads) != len(down_block_types):
-            raise ValueError(
-                f"Must provide the same number of `num_attention_heads` as `down_block_types`. " \
-                f"`num_attention_heads`: {num_attention_heads}. `down_block_types`: {down_block_types}."
-            )
-
-        if isinstance(cross_attention_dim, list) and len(cross_attention_dim) != len(down_block_types):
-            raise ValueError(
-                f"Must provide the same number of `cross_attention_dim` as `down_block_types`. " \
-                f"`cross_attention_dim`: {cross_attention_dim}. `down_block_types`: {down_block_types}."
-            )
-
-        if not isinstance(layers_per_block, int) and len(layers_per_block) != len(down_block_types):
-            raise ValueError(
-                f"Must provide the same number of `layers_per_block` as `down_block_types`. " \
-                f"`layers_per_block`: {layers_per_block}. `down_block_types`: {down_block_types}."
-            )
+        assert len(down_block_types) == 4
+        assert len(up_block_types) == 4
 
         # input
         self.conv_in = nn.Conv2d(
             in_channels,
-            block_out_channels[0],
+            block_out_channels[0], # 320
             kernel_size=3,
             padding=1,
         )
 
         # time
-        time_embed_dim = block_out_channels[0] * 4
+        time_embed_dim = block_out_channels[0] * 4 # 1280
 
         self.time_proj = Timesteps(block_out_channels[0], True, downscale_freq_shift=0)
-        timestep_input_dim = block_out_channels[0]
+        timestep_input_dim = block_out_channels[0] # 320
 
         self.time_embedding = TimestepEmbedding(timestep_input_dim, time_embed_dim)
 
@@ -154,22 +185,21 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         self.down_blocks = nn.ModuleList([])
         self.up_blocks = nn.ModuleList([])
 
-        if isinstance(num_attention_heads, int):
-            num_attention_heads = (num_attention_heads,) * len(down_block_types)
+        # cross_attention_dim === 1024
+        cross_attention_dim = (cross_attention_dim,) * len(down_block_types)
 
-        if isinstance(cross_attention_dim, int):
-            cross_attention_dim = (cross_attention_dim,) * len(down_block_types)
+        # layers_per_block === 2
+        layers_per_block = [layers_per_block] * len(down_block_types) # len(down_block_types) === 4
 
-        if isinstance(layers_per_block, int):
-            layers_per_block = [layers_per_block] * len(down_block_types)
-
-        if isinstance(transformer_layers_per_block, int):
-            transformer_layers_per_block = [transformer_layers_per_block] * len(down_block_types)
-
-        blocks_time_embed_dim = time_embed_dim
+        # transformer_layers_per_block === 1
+        transformer_layers_per_block = [transformer_layers_per_block] * len(down_block_types)
 
         # down
         output_channel = block_out_channels[0]
+        # # down_block_types --
+        #     ['CrossAttnDownBlockSpatioTemporal', 'CrossAttnDownBlockSpatioTemporal', 
+        #     'CrossAttnDownBlockSpatioTemporal', 'DownBlockSpatioTemporal']
+
         for i, down_block_type in enumerate(down_block_types):
             input_channel = output_channel
             output_channel = block_out_channels[i]
@@ -181,7 +211,7 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
                 transformer_layers_per_block=transformer_layers_per_block[i],
                 in_channels=input_channel,
                 out_channels=output_channel,
-                temb_channels=blocks_time_embed_dim,
+                temb_channels=time_embed_dim,
                 add_downsample=not is_final_block,
                 resnet_eps=1e-5,
                 cross_attention_dim=cross_attention_dim[i],
@@ -193,14 +223,11 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         # mid
         self.mid_block = UNetMidBlockSpatioTemporal(
             block_out_channels[-1],
-            temb_channels=blocks_time_embed_dim,
+            temb_channels=time_embed_dim,
             transformer_layers_per_block=transformer_layers_per_block[-1],
             cross_attention_dim=cross_attention_dim[-1],
             num_attention_heads=num_attention_heads[-1],
         )
-
-        # count how many layers upsample the images
-        self.num_upsamplers = 0
 
         # up
         reversed_block_out_channels = list(reversed(block_out_channels))
@@ -210,31 +237,34 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         reversed_transformer_layers_per_block = list(reversed(transformer_layers_per_block))
 
         output_channel = reversed_block_out_channels[0]
+        # up_block_types ---
+        #     ['UpBlockSpatioTemporal', 'CrossAttnUpBlockSpatioTemporal', 
+        #     'CrossAttnUpBlockSpatioTemporal', 'CrossAttnUpBlockSpatioTemporal']
+
         for i, up_block_type in enumerate(up_block_types):
-            is_final_block = i == len(block_out_channels) - 1
+            # is_final_block = i == len(block_out_channels) - 1
 
             prev_output_channel = output_channel
             output_channel = reversed_block_out_channels[i]
             input_channel = reversed_block_out_channels[min(i + 1, len(block_out_channels) - 1)]
 
             # add upsample block for all BUT final layer
-            if not is_final_block:
-                add_upsample = True
-                self.num_upsamplers += 1
-            else:
-                add_upsample = False
+            # if not is_final_block:
+            #     add_upsample = True
+            # else:
+            #     add_upsample = False
 
             up_block = get_up_block(
                 up_block_type,
-                num_layers=reversed_layers_per_block[i] + 1,
+                num_layers=reversed_layers_per_block[i] + 1, # reversed_layers_per_block -- [2, 2, 2, 2]
                 transformer_layers_per_block=reversed_transformer_layers_per_block[i],
                 in_channels=input_channel,
                 out_channels=output_channel,
                 prev_output_channel=prev_output_channel,
-                temb_channels=blocks_time_embed_dim,
-                add_upsample=add_upsample,
+                temb_channels=time_embed_dim,
+                add_upsample=(i != len(block_out_channels) - 1), #add_upsample,
                 resnet_eps=1e-5,
-                resolution_idx=i,
+                # resolution_idx=i,
                 cross_attention_dim=reversed_cross_attention_dim[i],
                 num_attention_heads=reversed_num_attention_heads[i],
                 resnet_act_fn="silu",
@@ -244,6 +274,7 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
 
         # out
         self.conv_norm_out = nn.GroupNorm(num_channels=block_out_channels[0], num_groups=32, eps=1e-5)
+        # self.conv_norm_out -- GroupNorm(32, 320, eps=1e-05, affine=True)
         self.conv_act = nn.SiLU()
 
         self.conv_out = nn.Conv2d(
@@ -252,9 +283,10 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
             kernel_size=3,
             padding=1,
         )
+        # self.conv_out -- Conv2d(320, 4, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
 
     @property
-    def attn_processors(self) -> Dict[str, AttentionProcessor]:
+    def attn_processors(self):
         r"""
         Returns:
             `dict` of attention processors: A dictionary containing all attention processors used in the model with
@@ -266,7 +298,7 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         def fn_recursive_add_processors(
                 name: str,
                 module: torch.nn.Module,
-                processors: Dict[str, AttentionProcessor],
+                processors,
         ):
             if hasattr(module, "get_processor"):
                 processors[f"{name}.processor"] = module.get_processor(return_deprecated_lora=True)
@@ -281,18 +313,9 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
 
         return processors
 
-    def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
+    def set_attn_processor(self, processor):
         r"""
         Sets the attention processor to use to compute attention.
-
-        Parameters:
-            processor (`dict` of `AttentionProcessor` or only `AttentionProcessor`):
-                The instantiated processor class or a dictionary of processor classes that will be set as the processor
-                for **all** `Attention` layers.
-
-                If `processor` is a dict, the key needs to define the path to the corresponding cross attention
-                processor. This is strongly recommended when setting trainable attention processors.
-
         """
         count = len(self.attn_processors.keys())
 
@@ -315,53 +338,9 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         for name, module in self.named_children():
             fn_recursive_attn_processor(name, module, processor)
 
-    def set_default_attn_processor(self):
-        """
-        Disables custom attention processors and sets the default attention implementation.
-        """
-        if all(proc.__class__ in CROSS_ATTENTION_PROCESSORS for proc in self.attn_processors.values()):
-            processor = AttnProcessor()
-        else:
-            raise ValueError(
-                f"Cannot call `set_default_attn_processor` " \
-                f"when attention processors are of type {next(iter(self.attn_processors.values()))}"
-            )
-
-        self.set_attn_processor(processor)
-
     def _set_gradient_checkpointing(self, module, value=False):
         if hasattr(module, "gradient_checkpointing"):
             module.gradient_checkpointing = value
-
-    # Copied from diffusers.models.unets.unet_3d_condition.UNet3DConditionModel.enable_forward_chunking
-    def enable_forward_chunking(self, chunk_size: Optional[int] = None, dim: int = 0) -> None:
-        """
-        Sets the attention processor to use [feed forward
-        chunking](https://huggingface.co/blog/reformer#2-chunked-feed-forward-layers).
-
-        Parameters:
-            chunk_size (`int`, *optional*):
-                The chunk size of the feed-forward layers. If not specified, will run feed-forward layer individually
-                over each tensor of dim=`dim`.
-            dim (`int`, *optional*, defaults to `0`):
-                The dimension over which the feed-forward computation should be chunked. Choose between dim=0 (batch)
-                or dim=1 (sequence length).
-        """
-        if dim not in [0, 1]:
-            raise ValueError(f"Make sure to set `dim` to either 0 or 1, not {dim}")
-
-        # By default chunk size is 1
-        chunk_size = chunk_size or 1
-
-        def fn_recursive_feed_forward(module: torch.nn.Module, chunk_size: int, dim: int):
-            if hasattr(module, "set_chunk_feed_forward"):
-                module.set_chunk_feed_forward(chunk_size=chunk_size, dim=dim)
-
-            for child in module.children():
-                fn_recursive_feed_forward(child, chunk_size, dim)
-
-        for module in self.children():
-            fn_recursive_feed_forward(module, chunk_size, dim)
 
     def forward(
             self,
@@ -372,44 +351,32 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
             pose_latents: torch.Tensor = None,
             image_only_indicator: bool = False,
             return_dict: bool = True,
-    ) -> Union[UNetSpatioTemporalConditionOutput, Tuple]:
-        r"""
-        The [`UNetSpatioTemporalConditionModel`] forward method.
+    ):
+        # pose_latents = None
+        # image_only_indicator = False
+        # return_dict = False
+        # tensor [sample] size: [1, 16, 8, 64, 64], min: -4.78125, max: 4.757812, mean: 0.000227
+        # timestep --- tensor(1.637770, device='cuda:0')
+        # tensor [encoder_hidden_states] size: [1, 5, 1024], min: 0.0, max: 0.0, mean: 0.0
+        # tensor [added_time_ids] size: [1, 3], min: 0.020004, max: 127.0, mean: 44.340004
 
-        Args:
-            sample (`torch.FloatTensor`):
-                The noisy input tensor with the following shape `(batch, num_frames, channel, height, width)`.
-            timestep (`torch.FloatTensor` or `float` or `int`): The number of timesteps to denoise an input.
-            encoder_hidden_states (`torch.FloatTensor`):
-                The encoder hidden states with shape `(batch, sequence_length, cross_attention_dim)`.
-            added_time_ids: (`torch.FloatTensor`):
-                The additional time ids with shape `(batch, num_additional_ids)`. These are encoded with sinusoidal
-                embeddings and added to the time embeddings.
-            pose_latents: (`torch.FloatTensor`):
-                The additional latents for pose sequences.
-            image_only_indicator (`bool`, *optional*, defaults to `False`):
-                Whether or not training with all images.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~models.unet_slatio_temporal.UNetSpatioTemporalConditionOutput`] 
-                instead of a plain tuple.
-        Returns:
-            [`~models.unet_slatio_temporal.UNetSpatioTemporalConditionOutput`] or `tuple`:
-                If `return_dict` is True, 
-                an [`~models.unet_slatio_temporal.UNetSpatioTemporalConditionOutput`] is returned, 
-                otherwise a `tuple` is returned where the first element is the sample tensor.
-        """
         # 1. time
         timesteps = timestep
-        if not torch.is_tensor(timesteps):
-            # TODO: this requires sync between CPU and GPU. So try to pass timesteps as tensors if you can
-            # This would be a good case for the `match` statement (Python 3.10+)
-            is_mps = sample.device.type == "mps"
-            if isinstance(timestep, float):
-                dtype = torch.float32 if is_mps else torch.float64
-            else:
-                dtype = torch.int32 if is_mps else torch.int64
-            timesteps = torch.tensor([timesteps], dtype=dtype, device=sample.device)
-        elif len(timesteps.shape) == 0:
+        # if not torch.is_tensor(timesteps): # False
+        #     pdb.set_trace()
+        #     # TODO: this requires sync between CPU and GPU. So try to pass timesteps as tensors if you can
+        #     # This would be a good case for the `match` statement (Python 3.10+)
+        #     is_mps = sample.device.type == "mps"
+        #     if isinstance(timestep, float):
+        #         dtype = torch.float32 if is_mps else torch.float64
+        #     else:
+        #         dtype = torch.int32 if is_mps else torch.int64
+        #     timesteps = torch.tensor([timesteps], dtype=dtype, device=sample.device)
+        # elif len(timesteps.shape) == 0: # True
+        #     # ==> pdb.set_trace()
+        #     timesteps = timesteps[None].to(sample.device)
+        if len(timesteps.shape) == 0: # True
+            # ==> pdb.set_trace()
             timesteps = timesteps[None].to(sample.device)
 
         # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
@@ -443,14 +410,22 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         # 2. pre-process
         sample = self.conv_in(sample)
         if pose_latents is not None:
+            # ==> pdb.set_trace()
             sample = sample + pose_latents
+        else:
+            # ==> pdb.set_trace() for pose_latents == None
+            pass
 
-        image_only_indicator = torch.ones(batch_size, num_frames, dtype=sample.dtype, device=sample.device) \
-            if image_only_indicator else torch.zeros(batch_size, num_frames, dtype=sample.dtype, device=sample.device)
+        # assert image_only_indicator == False
+        # image_only_indicator = torch.ones(batch_size, num_frames, dtype=sample.dtype, device=sample.device) \
+        #     if image_only_indicator else torch.zeros(batch_size, num_frames, dtype=sample.dtype, device=sample.device)
+
+        image_only_indicator = torch.zeros(batch_size, num_frames, dtype=sample.dtype, device=sample.device)
 
         down_block_res_samples = (sample,)
         for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
+                # downsample_block -- CrossAttnDownBlockSpatioTemporal
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
                     temb=emb,
@@ -458,6 +433,7 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
                     image_only_indicator=image_only_indicator,
                 )
             else:
+                # downsample_block -- DownBlockSpatioTemporal
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
                     temb=emb,
@@ -475,11 +451,25 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         )
 
         # 5. up
+        # down_block_res_samples:  is tuple: len = 12
+        #     tensor [item] size: [16, 320, 64, 64], min: -13.421875, max: 10.726562, mean: 0.005008
+        #     tensor [item] size: [16, 320, 64, 64], min: -11.304688, max: 7.28125, mean: -0.061166
+        #     tensor [item] size: [16, 320, 64, 64], min: -10.546875, max: 9.632812, mean: -0.003734
+        #     tensor [item] size: [16, 320, 32, 32], min: -22.453125, max: 21.15625, mean: 0.002473
+        #     tensor [item] size: [16, 640, 32, 32], min: -11.367188, max: 12.890625, mean: -0.052997
+        #     tensor [item] size: [16, 640, 32, 32], min: -11.203125, max: 13.078125, mean: -0.013832
+        #     tensor [item] size: [16, 640, 16, 16], min: -28.921875, max: 35.625, mean: -0.07044
+        #     tensor [item] size: [16, 1280, 16, 16], min: -28.765625, max: 23.71875, mean: -0.098765
+        #     tensor [item] size: [16, 1280, 16, 16], min: -23.140625, max: 23.734375, mean: -0.103224
+        #     tensor [item] size: [16, 1280, 8, 8], min: -39.1875, max: 38.34375, mean: -0.234854
+        #     tensor [item] size: [16, 1280, 8, 8], min: -39.6875, max: 33.15625, mean: -0.312641
+        #     tensor [item] size: [16, 1280, 8, 8], min: -42.125, max: 32.71875, mean: -0.280794
+
         for i, upsample_block in enumerate(self.up_blocks):
             res_samples = down_block_res_samples[-len(upsample_block.resnets):]
             down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
-
             if hasattr(upsample_block, "has_cross_attention") and upsample_block.has_cross_attention:
+                # upsample_block -- CrossAttnUpBlockSpatioTemporal
                 sample = upsample_block(
                     hidden_states=sample,
                     temb=emb,
@@ -488,6 +478,7 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
                     image_only_indicator=image_only_indicator,
                 )
             else:
+                # upsample_block -- UpBlockSpatioTemporal
                 sample = upsample_block(
                     hidden_states=sample,
                     temb=emb,
@@ -503,7 +494,4 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         # 7. Reshape back to original shape
         sample = sample.reshape(batch_size, num_frames, *sample.shape[1:])
 
-        if not return_dict:
-            return (sample,)
-
-        return UNetSpatioTemporalConditionOutput(sample=sample)
+        return (sample,)

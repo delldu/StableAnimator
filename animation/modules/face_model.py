@@ -4,10 +4,11 @@ from facexlib.utils.face_restoration_helper import FaceRestoreHelper
 import insightface
 from insightface.app import FaceAnalysis
 
-
+# xxxx_debug
 class FaceModel(nn.Module):
     def __init__(self):
-        super(FaceModel, self).__init__()
+        super().__init__()
+        # xxxx_debug
         self.app = FaceAnalysis(
             name='antelopev2', root='.', providers=['CUDAExecutionProvider', 'CPUExecutionProvider', ]
         )

@@ -16,6 +16,8 @@ from animation.modules.pose_net import PoseNet
 from animation.modules.unet import UNetSpatioTemporalConditionModel
 from animation.pipelines.inference_pipeline_animation import InferenceAnimationPipeline
 import random
+import pdb
+import todos
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -89,18 +91,18 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--validation_image",
+        "--reference_image",
         type=str,
         default=None,
         help=(
             "A set of paths to the controlnext conditioning image be evaluated every `--validation_steps`"
             " and logged to `--report_to`. Provide either a matching number of `--validation_prompt`s, a"
-            " a single `--validation_prompt` to be used with all `--validation_image`s, or a single"
-            " `--validation_image` that will be used with all `--validation_prompt`s."
+            " a single `--validation_prompt` to be used with all `--reference_image`s, or a single"
+            " `--reference_image` that will be used with all `--validation_prompt`s."
         ),
     )
     parser.add_argument(
-        "--validation_control_folder",
+        "--pose_control_folder",
         type=str,
         default=None,
         help=(
@@ -226,14 +228,22 @@ if __name__ == "__main__":
     image_encoder = CLIPVisionModelWithProjection.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="image_encoder", revision=args.revision
     )
+    # image_encoder.forward.__code__ ---
+    # <file "miniconda3/envs/python39/lib/python3.9/site-packages/transformers/models/clip/modeling_clip.py", line 1500>
+
+    # args.pretrained_model_name_or_path === 'checkpoints/SVD/stable-video-diffusion-img2vid-xt'
     vae = AutoencoderKLTemporalDecoder.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision)
+        args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision) # args.revision -- None
+
     unet = UNetSpatioTemporalConditionModel.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="unet",
         low_cpu_mem_usage=True,
     )
-    pose_net = PoseNet(noise_latent_channels=unet.config.block_out_channels[0])
+    # unet -- UNetSpatioTemporalConditionModel
+
+    pose_net = PoseNet(noise_latent_channels=unet.config.block_out_channels[0]) # 320 -- unet.config.block_out_channels[0]
+
     face_encoder = FusionFaceId(
         cross_attention_dim=1024,
         id_embeddings_dim=512,
@@ -241,13 +251,81 @@ if __name__ == "__main__":
         clip_embeddings_dim=1024,
         num_tokens=4, )
     face_model = FaceModel()
+    # face_model.face_helper
+
 
     lora_rank = 128
     attn_procs = {}
     unet_svd = unet.state_dict()
+    # unet.attn_processors.keys()
+    # dict_keys(['down_blocks.0.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.0.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.0.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.0.attentions.0.temporal_transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.0.attentions.1.transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.0.attentions.1.transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.0.attentions.1.temporal_transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.0.attentions.1.temporal_transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.1.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.1.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.1.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.1.attentions.0.temporal_transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.1.attentions.1.transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.1.attentions.1.transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.1.attentions.1.temporal_transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.1.attentions.1.temporal_transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.2.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.2.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.2.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.2.attentions.0.temporal_transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.2.attentions.1.transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.2.attentions.1.transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.2.attentions.1.temporal_transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.2.attentions.1.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.1.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.1.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.1.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.1.attentions.0.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.1.attentions.1.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.1.attentions.1.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.1.attentions.1.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.1.attentions.1.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.1.attentions.2.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.1.attentions.2.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.1.attentions.2.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.1.attentions.2.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.2.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.2.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.2.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.2.attentions.0.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.2.attentions.1.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.2.attentions.1.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.2.attentions.1.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.2.attentions.1.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.2.attentions.2.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.2.attentions.2.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.2.attentions.2.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.2.attentions.2.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.3.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.3.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.3.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.3.attentions.0.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.3.attentions.1.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.3.attentions.1.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.3.attentions.1.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.3.attentions.1.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.3.attentions.2.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.3.attentions.2.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.3.attentions.2.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.3.attentions.2.temporal_transformer_blocks.0.attn2.processor', 
+    #     'mid_block.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'mid_block.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'mid_block.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'mid_block.attentions.0.temporal_transformer_blocks.0.attn2.processor'])
 
     for name in unet.attn_processors.keys():
         if "transformer_blocks" in name and "temporal_transformer_blocks" not in name:
+            # name -- 'down_blocks.0.attentions.0.transformer_blocks.0.attn1.processor'
             cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
             if name.startswith("mid_block"):
                 hidden_size = unet.config.block_out_channels[-1]
@@ -258,10 +336,11 @@ if __name__ == "__main__":
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = unet.config.block_out_channels[block_id]
             if cross_attention_dim is None:
-                # print(f"This is AnimationAttnProcessor: {name}")
+                # name -- 'down_blocks.0.attentions.0.transformer_blocks.0.attn1.processor'
+                # hidden_size -- 320, cross_attention_dim === None
                 attn_procs[name] = AnimationAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=lora_rank)
             else:
-                # print(f"This is AnimationIDAttnProcessor: {name}")
+                # name -- 'down_blocks.0.attentions.0.transformer_blocks.0.attn2.processor'
                 layer_name = name.split(".processor")[0]
                 weights = {
                     "to_k_ip.weight": unet_svd[layer_name + ".to_k.weight"],
@@ -270,7 +349,8 @@ if __name__ == "__main__":
                 attn_procs[name] = AnimationIDAttnNormalizedProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=lora_rank)
                 attn_procs[name].load_state_dict(weights, strict=False)
         elif "temporal_transformer_blocks" in name:
-            cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
+            #  name -- 'down_blocks.0.attentions.0.temporal_transformer_blocks.0.attn1.processor'
+            # cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
             if name.startswith("mid_block"):
                 hidden_size = unet.config.block_out_channels[-1]
             elif name.startswith("up_blocks"):
@@ -279,28 +359,101 @@ if __name__ == "__main__":
             elif name.startswith("down_blocks"):
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = unet.config.block_out_channels[block_id]
-            if cross_attention_dim is None:
-                attn_procs[name] = XFormersAttnProcessor()
-            else:
-                attn_procs[name] = XFormersAttnProcessor()
+            # if cross_attention_dim is None:
+            #     attn_procs[name] = XFormersAttnProcessor()
+            # else:
+            #     attn_procs[name] = XFormersAttnProcessor()
+            attn_procs[name] = XFormersAttnProcessor()
+
+    # (Pdb) attn_procs.keys()
+    # dict_keys(['down_blocks.0.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.0.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.0.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.0.attentions.0.temporal_transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.0.attentions.1.transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.0.attentions.1.transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.0.attentions.1.temporal_transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.0.attentions.1.temporal_transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.1.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.1.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.1.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.1.attentions.0.temporal_transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.1.attentions.1.transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.1.attentions.1.transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.1.attentions.1.temporal_transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.1.attentions.1.temporal_transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.2.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.2.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.2.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.2.attentions.0.temporal_transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.2.attentions.1.transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.2.attentions.1.transformer_blocks.0.attn2.processor', 
+    #     'down_blocks.2.attentions.1.temporal_transformer_blocks.0.attn1.processor', 
+    #     'down_blocks.2.attentions.1.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.1.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.1.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.1.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.1.attentions.0.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.1.attentions.1.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.1.attentions.1.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.1.attentions.1.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.1.attentions.1.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.1.attentions.2.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.1.attentions.2.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.1.attentions.2.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.1.attentions.2.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.2.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.2.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.2.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.2.attentions.0.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.2.attentions.1.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.2.attentions.1.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.2.attentions.1.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.2.attentions.1.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.2.attentions.2.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.2.attentions.2.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.2.attentions.2.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.2.attentions.2.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.3.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.3.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.3.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.3.attentions.0.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.3.attentions.1.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.3.attentions.1.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.3.attentions.1.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.3.attentions.1.temporal_transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.3.attentions.2.transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.3.attentions.2.transformer_blocks.0.attn2.processor', 
+    #     'up_blocks.3.attentions.2.temporal_transformer_blocks.0.attn1.processor', 
+    #     'up_blocks.3.attentions.2.temporal_transformer_blocks.0.attn2.processor', 
+    #     'mid_block.attentions.0.transformer_blocks.0.attn1.processor', 
+    #     'mid_block.attentions.0.transformer_blocks.0.attn2.processor', 
+    #     'mid_block.attentions.0.temporal_transformer_blocks.0.attn1.processor', 
+    #     'mid_block.attentions.0.temporal_transformer_blocks.0.attn2.processor'])
+
+
     unet.set_attn_processor(attn_procs)
+    # unet -- UNetSpatioTemporalConditionModel(...)
 
     # resume the previous checkpoint
     if args.posenet_model_name_or_path is not None and args.face_encoder_model_name_or_path is not None and args.unet_model_name_or_path is not None:
         print("Loading existing posenet weights, face_encoder weights and unet weights.")
         if args.posenet_model_name_or_path.endswith(".pth"):
+            # args.posenet_model_name_or_path -- checkpoints/Animation/pose_net.pth'
             pose_net_state_dict = torch.load(args.posenet_model_name_or_path, map_location="cpu")
             pose_net.load_state_dict(pose_net_state_dict, strict=True)
         else:
             print("posenet weights loading fail")
             print(1/0)
         if args.face_encoder_model_name_or_path.endswith(".pth"):
+            # args.face_encoder_model_name_or_path -- 'checkpoints/Animation/face_encoder.pth'
             face_encoder_state_dict = torch.load(args.face_encoder_model_name_or_path, map_location="cpu")
             face_encoder.load_state_dict(face_encoder_state_dict, strict=True)
         else:
             print("face_encoder weights loading fail")
             print(1/0)
         if args.unet_model_name_or_path.endswith(".pth"):
+            #  args.unet_model_name_or_path -- 'checkpoints/Animation/unet.pth'
             unet_state_dict = torch.load(args.unet_model_name_or_path, map_location="cpu")
             unet.load_state_dict(unet_state_dict, strict=True)
         else:
@@ -321,6 +474,11 @@ if __name__ == "__main__":
     # weight_dtype = torch.float32
     # weight_dtype = torch.bfloat16
 
+    # vae -- AutoencoderKLTemporalDecoder()
+    # vae.encoder -- Encoder
+    # vae.decoder -- Decoder
+    # ver.quant_conv -- Conv2d(8, 8, kernel_size=(1, 1), stride=(1, 1))
+
     pipeline = InferenceAnimationPipeline(
         vae=vae,
         image_encoder=image_encoder,
@@ -333,42 +491,45 @@ if __name__ == "__main__":
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    validation_image_path = args.validation_image
-    validation_image = Image.open(args.validation_image).convert('RGB')
-    validation_control_images = load_images_from_folder(args.validation_control_folder, width=args.width, height=args.height)
+    # args.reference_image -- 'inference/case-1/reference.png'
+    reference_image_path = args.reference_image
+    reference_image = Image.open(args.reference_image).convert('RGB')
+    # pp args.pose_control_folder -- 'inference/case-1/poses'
+    pose_control_images = load_images_from_folder(args.pose_control_folder, width=args.width, height=args.height)
 
-    num_frames = len(validation_control_images)
+    num_frames = len(pose_control_images) # 16
     face_model.face_helper.clean_all()
-    validation_face = cv2.imread(validation_image_path)
-    validation_image_bgr = cv2.cvtColor(validation_face, cv2.COLOR_RGB2BGR)
-    validation_image_face_info = face_model.app.get(validation_image_bgr)
-    if len(validation_image_face_info) > 0:
-        validation_image_face_info = sorted(validation_image_face_info, key=lambda x: (x['bbox'][2] - x['bbox'][0]) * (x['bbox'][3] - x['bbox'][1]))[-1]
-        validation_image_id_ante_embedding = validation_image_face_info['embedding']
+
+    reference_face = cv2.imread(reference_image_path)
+    validation_image_bgr = cv2.cvtColor(reference_face, cv2.COLOR_RGB2BGR)
+    reference_image_face_info = face_model.app.get(validation_image_bgr)
+    # reference_image_face_info is dict:
+    #     array [bbox] shape: (4,), min: 10.485265731811523, max: 309.0953674316406, mean: 164.8896484375
+    #     array [kps] shape: (5, 2), min: 37.669029235839844, max: 289.92230224609375, mean: 164.64889526367188
+    #     [det_score] type: <class 'numpy.float32'>
+    #     array [landmark_3d_68] shape: (68, 3), min: -2.8244519233703613, max: 312.5506896972656, mean: 114.32061004638672
+    #     array [pose] shape: (3,), min: -5.829032897949219, max: 8.235852241516113, mean: -0.47325700521469116
+    #     array [landmark_2d_106] shape: (106, 2), min: 27.393348693847656, max: 307.9230651855469, mean: 164.82591247558594
+    #     [gender] type: <class 'numpy.int64'>
+    #     [age] value: '36'
+    #     array [embedding] shape: (512,), min: -3.173130989074707, max: 2.986737012863159, mean: 0.009902000427246094
+
+    if len(reference_image_face_info) > 0:
+        reference_image_face_info = sorted(reference_image_face_info, key=lambda x: (x['bbox'][2] - x['bbox'][0]) * (x['bbox'][3] - x['bbox'][1]))[-1]
+        reference_image_id_ante_embedding = reference_image_face_info['embedding']
     else:
-        validation_image_id_ante_embedding = None
-
-    if validation_image_id_ante_embedding is None:
-        face_model.face_helper.read_image(validation_image_bgr)
-        face_model.face_helper.get_face_landmarks_5(only_center_face=True)
-        face_model.face_helper.align_warp_face()
-
-        if len(face_model.face_helper.cropped_faces) == 0:
-            validation_image_id_ante_embedding = np.zeros((512,))
-        else:
-            validation_image_align_face = face_model.face_helper.cropped_faces[0]
-            print('fail to detect face using insightface, extract embedding on align face')
-            validation_image_id_ante_embedding = face_model.handler_ante.get_feat(validation_image_align_face)
+        reference_image_id_ante_embedding = None
+        # reference_image_id_ante_embedding = np.zeros((512,))
 
     # generator = torch.Generator(device=accelerator.device).manual_seed(23123134)
 
-    decode_chunk_size = args.decode_chunk_size
+    decode_chunk_size = args.decode_chunk_size # 4
     video_frames = pipeline(
-        image=validation_image,
-        image_pose=validation_control_images,
+        image=reference_image,
+        image_pose=pose_control_images,
         height=args.height,
         width=args.width,
-        num_frames=num_frames,
+        num_frames=num_frames, # 16
         tile_size=args.tile_size,
         tile_overlap=args.frames_overlap,
         decode_chunk_size=decode_chunk_size,
@@ -380,9 +541,8 @@ if __name__ == "__main__":
         num_inference_steps=args.num_inference_steps,
         generator=generator,
         output_type="pil",
-        validation_image_id_ante_embedding=validation_image_id_ante_embedding,
-    ).frames[0]
-
+        reference_image_id_ante_embedding=reference_image_id_ante_embedding, # shape -- (512,)
+    )[0]
     out_file = os.path.join(
         args.output_dir,
         f"animation_video.mp4",

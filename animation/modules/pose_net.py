@@ -1,13 +1,13 @@
-from pathlib import Path
-
 import einops
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.init as init
 from diffusers.models.modeling_utils import ModelMixin
+import pdb
+import todos
 
+# xxxx_debug
 class PoseNet(ModelMixin):
+# class PoseNet(nn.Module):
     def __init__(self, noise_latent_channels=320):
         super().__init__()
         # multiple convolution layers
@@ -35,44 +35,15 @@ class PoseNet(ModelMixin):
 
         # Final projection layer
         self.final_proj = nn.Conv2d(in_channels=128, out_channels=noise_latent_channels, kernel_size=1)
-
-        # Initialize layers
-        self._initialize_weights()
-
         self.scale = nn.Parameter(torch.ones(1) * 2)
 
-    def _initialize_weights(self):
-        """Initialize weights with He. initialization and zero out the biases
-        """
-        for m in self.conv_layers:
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
-                init.normal_(m.weight, mean=0.0, std=np.sqrt(2. / n))
-                if m.bias is not None:
-                    init.zeros_(m.bias)
-        init.zeros_(self.final_proj.weight)
-        if self.final_proj.bias is not None:
-            init.zeros_(self.final_proj.bias)
-
     def forward(self, x):
-        if x.ndim == 5:
-            x = einops.rearrange(x, "b f c h w -> (b f) c h w")
+        # tensor [x] size: [16, 3, 512, 512], min: -1.0, max: 1.0, mean: -0.994078
+
         x = self.conv_layers(x)
         x = self.final_proj(x)
+        # tensor [x] size: [16, 320, 64, 64], min: -0.747559, max: 0.661133, mean: 0.000168
 
         return x * self.scale
 
-    @classmethod
-    def from_pretrained(cls, pretrained_model_path):
-        """load pretrained pose-net weights
-        """
-        if not Path(pretrained_model_path).exists():
-            print(f"There is no model file in {pretrained_model_path}")
-        print(f"loaded PoseNet's pretrained weights from {pretrained_model_path}.")
 
-        state_dict = torch.load(pretrained_model_path, map_location="cpu")
-        model = PoseNet(noise_latent_channels=320)
-
-        model.load_state_dict(state_dict, strict=True)
-
-        return model
