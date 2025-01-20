@@ -120,50 +120,15 @@ class BasicTransformerBlock(nn.Module):
         self.num_positional_embeddings = num_positional_embeddings
         self.only_cross_attention = only_cross_attention
 
-        # We keep these boolean flags for backward-compatibility.
-        # self.use_ada_layer_norm_zero = (num_embeds_ada_norm is not None) and norm_type == "ada_norm_zero"
-        # self.use_ada_layer_norm = (num_embeds_ada_norm is not None) and norm_type == "ada_norm"
-        # self.use_ada_layer_norm_single = norm_type == "ada_norm_single"
-        # self.use_layer_norm = norm_type == "layer_norm"
-        # self.use_ada_layer_norm_continuous = norm_type == "ada_norm_continuous"
-
-        # if norm_type in ("ada_norm", "ada_norm_zero") and num_embeds_ada_norm is None:
-        #     raise ValueError(
-        #         f"`norm_type` is set to {norm_type}, but `num_embeds_ada_norm` is not defined. Please make sure to"
-        #         f" define `num_embeds_ada_norm` if setting `norm_type` to {norm_type}."
-        #     )
 
         self.norm_type = norm_type
         self.num_embeds_ada_norm = num_embeds_ada_norm
 
-        # if positional_embeddings and (num_positional_embeddings is None):
-        #     raise ValueError(
-        #         "If `positional_embedding` type is defined, `num_positition_embeddings` must also be defined."
-        #     )
 
-        # if positional_embeddings == "sinusoidal":
-        #     self.pos_embed = SinusoidalPositionalEmbedding(dim, max_seq_length=num_positional_embeddings)
-        # else:
-        #     self.pos_embed = None
         self.pos_embed = None
 
         # Define 3 blocks. Each block has its own normalization layer.
         # 1. Self-Attn
-        # if norm_type == "ada_norm":
-        #     self.norm1 = AdaLayerNorm(dim, num_embeds_ada_norm)
-        # elif norm_type == "ada_norm_zero":
-        #     self.norm1 = AdaLayerNormZero(dim, num_embeds_ada_norm)
-        # elif norm_type == "ada_norm_continuous":
-        #     self.norm1 = AdaLayerNormContinuous(
-        #         dim,
-        #         ada_norm_continous_conditioning_embedding_dim,
-        #         norm_elementwise_affine,
-        #         norm_eps,
-        #         ada_norm_bias,
-        #         "rms_norm",
-        #     )
-        # else:
-        #     self.norm1 = nn.LayerNorm(dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps)
         self.norm1 = nn.LayerNorm(dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps)
 
         self.attn1 = Attention(
@@ -178,58 +143,19 @@ class BasicTransformerBlock(nn.Module):
         )
 
         # 2. Cross-Attn
-        if cross_attention_dim is not None or double_self_attention:
-            # We currently only use AdaLayerNormZero for self attention where there will only be one attention block.
-            # I.e. the number of returned modulation chunks from AdaLayerZero would not make sense if returned during
-            # the second cross attention block.
-            # if norm_type == "ada_norm":
-            #     self.norm2 = AdaLayerNorm(dim, num_embeds_ada_norm)
-            # elif norm_type == "ada_norm_continuous":
-            #     self.norm2 = AdaLayerNormContinuous(
-            #         dim,
-            #         ada_norm_continous_conditioning_embedding_dim,
-            #         norm_elementwise_affine,
-            #         norm_eps,
-            #         ada_norm_bias,
-            #         "rms_norm",
-            #     )
-            # else:
-            #     self.norm2 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
-            self.norm2 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
-
-            self.attn2 = Attention(
-                query_dim=dim,
-                cross_attention_dim=cross_attention_dim if not double_self_attention else None,
-                heads=num_attention_heads,
-                dim_head=attention_head_dim,
-                dropout=dropout,
-                bias=attention_bias,
-                upcast_attention=upcast_attention,
-                out_bias=attention_out_bias,
-            )  # is self-attn if encoder_hidden_states is none
-        else:
-            pdb.set_trace()
-            if norm_type == "ada_norm_single":  # For Latte
-                self.norm2 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
-            else:
-                self.norm2 = None
-            self.attn2 = None
+        self.norm2 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
+        self.attn2 = Attention(
+            query_dim=dim,
+            cross_attention_dim=cross_attention_dim if not double_self_attention else None,
+            heads=num_attention_heads,
+            dim_head=attention_head_dim,
+            dropout=dropout,
+            bias=attention_bias,
+            upcast_attention=upcast_attention,
+            out_bias=attention_out_bias,
+        )  # is self-attn if encoder_hidden_states is none
 
         # 3. Feed-forward
-        # if norm_type == "ada_norm_continuous":
-        #     self.norm3 = AdaLayerNormContinuous(
-        #         dim,
-        #         ada_norm_continous_conditioning_embedding_dim,
-        #         norm_elementwise_affine,
-        #         norm_eps,
-        #         ada_norm_bias,
-        #         "layer_norm",
-        #     )
-
-        # elif norm_type in ["ada_norm_zero", "ada_norm", "layer_norm"]:
-        #     self.norm3 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
-        # elif norm_type == "layer_norm_i2vgen":
-        #     self.norm3 = None
         self.norm3 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
 
         self.ff = FeedForward(
@@ -242,12 +168,6 @@ class BasicTransformerBlock(nn.Module):
         )
 
         # 4. Fuser
-        # if attention_type == "gated" or attention_type == "gated-text-image":
-        #     self.fuser = GatedSelfAttentionDense(dim, cross_attention_dim, num_attention_heads, attention_head_dim)
-
-        # # 5. Scale-shift for PixArt-Alpha.
-        # if norm_type == "ada_norm_single":
-        #     self.scale_shift_table = nn.Parameter(torch.randn(6, dim) / dim**0.5)
 
         # let chunk size default to None
         self._chunk_size = None
@@ -276,29 +196,7 @@ class BasicTransformerBlock(nn.Module):
         # Notice that normalization is always applied before the real computation in the following blocks.
         # 0. Self-Attention
         batch_size = hidden_states.shape[0]
-
-        # if self.norm_type == "ada_norm":
-        #     norm_hidden_states = self.norm1(hidden_states, timestep)
-        # elif self.norm_type == "ada_norm_zero":
-        #     norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(
-        #         hidden_states, timestep, class_labels, hidden_dtype=hidden_states.dtype
-        #     )
-        # elif self.norm_type in ["layer_norm", "layer_norm_i2vgen"]:
-        #     norm_hidden_states = self.norm1(hidden_states)
-        # elif self.norm_type == "ada_norm_continuous":
-        #     norm_hidden_states = self.norm1(hidden_states, added_cond_kwargs["pooled_text_emb"])
-        # elif self.norm_type == "ada_norm_single":
-        #     shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-        #         self.scale_shift_table[None] + timestep.reshape(batch_size, 6, -1)
-        #     ).chunk(6, dim=1)
-        #     norm_hidden_states = self.norm1(hidden_states)
-        #     norm_hidden_states = norm_hidden_states * (1 + scale_msa) + shift_msa
-        # else:
-        #     raise ValueError("Incorrect norm used")
         norm_hidden_states = self.norm1(hidden_states)
-
-        # if self.pos_embed is not None:
-        #     norm_hidden_states = self.pos_embed(norm_hidden_states)
 
         # 1. Prepare GLIGEN inputs
         cross_attention_kwargs = cross_attention_kwargs.copy() if cross_attention_kwargs is not None else {}
@@ -310,11 +208,6 @@ class BasicTransformerBlock(nn.Module):
             attention_mask=attention_mask,
             **cross_attention_kwargs,
         )
-
-        # if self.norm_type == "ada_norm_zero":
-        #     attn_output = gate_msa.unsqueeze(1) * attn_output
-        # elif self.norm_type == "ada_norm_single":
-        #     attn_output = gate_msa * attn_output
 
         hidden_states = attn_output + hidden_states
         if hidden_states.ndim == 4:
@@ -352,30 +245,12 @@ class BasicTransformerBlock(nn.Module):
             hidden_states = attn_output + hidden_states
 
         # 4. Feed-forward
-        # i2vgen doesn't have this norm 🤷‍♂️
-        # if self.norm_type == "ada_norm_continuous":
-        #     norm_hidden_states = self.norm3(hidden_states, added_cond_kwargs["pooled_text_emb"])
-        # elif not self.norm_type == "ada_norm_single":
-        #     norm_hidden_states = self.norm3(hidden_states)
         norm_hidden_states = self.norm3(hidden_states)
-
-        # if self.norm_type == "ada_norm_zero":
-        #     norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
-
-        # if self.norm_type == "ada_norm_single":
-        #     norm_hidden_states = self.norm2(hidden_states)
-        #     norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
-
         if self._chunk_size is not None:
             # "feed_forward_chunk_size" can be used to save memory
             ff_output = _chunked_feed_forward(self.ff, norm_hidden_states, self._chunk_dim, self._chunk_size)
         else:
             ff_output = self.ff(norm_hidden_states)
-
-        # if self.norm_type == "ada_norm_zero":
-        #     ff_output = gate_mlp.unsqueeze(1) * ff_output
-        # elif self.norm_type == "ada_norm_single":
-        #     ff_output = gate_mlp * ff_output
 
         hidden_states = ff_output + hidden_states
         if hidden_states.ndim == 4:
@@ -537,7 +412,7 @@ class Attention(nn.Module):
     def __init__(
         self,
         query_dim: int,
-        cross_attention_dim: Optional[int] = None,
+        cross_attention_dim: Optional[int] = None, # 1024 or None
         heads: int = 8,
         kv_heads: Optional[int] = None,
         dim_head: int = 64,
@@ -547,21 +422,16 @@ class Attention(nn.Module):
         upcast_softmax: bool = False,
         cross_attention_norm: Optional[str] = None,
         cross_attention_norm_num_groups: int = 32,
-        qk_norm: Optional[str] = None,
         added_kv_proj_dim: Optional[int] = None,
         added_proj_bias: Optional[bool] = True,
-        norm_num_groups: Optional[int] = None,
-        spatial_norm_dim: Optional[int] = None,
         out_bias: bool = True,
         scale_qk: bool = True,
         only_cross_attention: bool = False,
         eps: float = 1e-5,
         rescale_output_factor: float = 1.0,
         residual_connection: bool = False,
-        _from_deprecated_attn_block: bool = False,
         processor: Optional["AttnProcessor"] = None,
         out_dim: int = None,
-        context_pre_only=None,
         pre_only=False,
     ):
         super().__init__()
@@ -582,14 +452,10 @@ class Attention(nn.Module):
         self.dropout = dropout
         self.fused_projections = False
         self.out_dim = out_dim if out_dim is not None else query_dim
-        self.context_pre_only = context_pre_only
         self.pre_only = pre_only
 
-        # we make use of this private variable to know whether this class is loaded
-        # with an deprecated state dict so that we can convert it on the fly
-        self._from_deprecated_attn_block = _from_deprecated_attn_block
-
         self.scale_qk = scale_qk
+
         assert self.scale_qk == True
         self.scale = dim_head**-0.5 if self.scale_qk else 1.0
 
@@ -607,42 +473,12 @@ class Attention(nn.Module):
                 "`only_cross_attention` can only be set to True if `added_kv_proj_dim` is not None. Make sure to set either `only_cross_attention=False` or define `added_kv_proj_dim`."
             )
 
-        # if norm_num_groups is not None:
-        #     pdb.set_trace()
-        #     self.group_norm = nn.GroupNorm(num_channels=query_dim, num_groups=norm_num_groups, eps=eps, affine=True)
-        # else:
-        #     self.group_norm = None
         self.group_norm = None
-
-        # if spatial_norm_dim is not None:
-        #     pdb.set_trace()
-        #     self.spatial_norm = SpatialNorm(f_channels=query_dim, zq_channels=spatial_norm_dim)
-        # else:
-        #     self.spatial_norm = None
         self.spatial_norm = None
-
-        assert qk_norm == None
-        # if qk_norm is None:
-        #     self.norm_q = None
-        #     self.norm_k = None
-        # elif qk_norm == "layer_norm":
-        #     self.norm_q = nn.LayerNorm(dim_head, eps=eps)
-        #     self.norm_k = nn.LayerNorm(dim_head, eps=eps)
-        # elif qk_norm == "fp32_layer_norm":
-        #     self.norm_q = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
-        #     self.norm_k = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
-        # elif qk_norm == "layer_norm_across_heads":
-        #     # Lumina applys qk norm across all heads
-        #     self.norm_q = nn.LayerNorm(dim_head * heads, eps=eps)
-        #     self.norm_k = nn.LayerNorm(dim_head * kv_heads, eps=eps)
-        # elif qk_norm == "rms_norm":
-        #     self.norm_q = RMSNorm(dim_head, eps=eps)
-        #     self.norm_k = RMSNorm(dim_head, eps=eps)
-        # else:
-        #     raise ValueError(f"unknown qk_norm: {qk_norm}. Should be None or 'layer_norm'")
         self.norm_q = None
         self.norm_k = None
 
+        # cross_attention_dim == 1024 or None
         if cross_attention_norm is None:
             self.norm_cross = None
         elif cross_attention_norm == "layer_norm":
@@ -680,29 +516,20 @@ class Attention(nn.Module):
         if self.added_kv_proj_dim is not None:
             self.add_k_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
             self.add_v_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
-            if self.context_pre_only is not None:
-                self.add_q_proj = nn.Linear(added_kv_proj_dim, self.inner_dim, bias=added_proj_bias)
+            # if self.context_pre_only is not None:
+            #     self.add_q_proj = nn.Linear(added_kv_proj_dim, self.inner_dim, bias=added_proj_bias)
 
         if not self.pre_only:
             self.to_out = nn.ModuleList([])
             self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=out_bias))
             self.to_out.append(nn.Dropout(dropout))
 
-        if self.context_pre_only is not None and not self.context_pre_only:
-            pdb.set_trace()
-            self.to_add_out = nn.Linear(self.inner_dim, self.out_dim, bias=out_bias)
+        # if self.context_pre_only is not None and not self.context_pre_only:
+        #     pdb.set_trace()
+        #     self.to_add_out = nn.Linear(self.inner_dim, self.out_dim, bias=out_bias)
 
-        if qk_norm is not None and added_kv_proj_dim is not None:
-            pdb.set_trace()
-            if qk_norm == "fp32_layer_norm":
-                self.norm_added_q = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
-                self.norm_added_k = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
-            elif qk_norm == "rms_norm":
-                self.norm_added_q = RMSNorm(dim_head, eps=eps)
-                self.norm_added_k = RMSNorm(dim_head, eps=eps)
-        else:
-            self.norm_added_q = None
-            self.norm_added_k = None
+        self.norm_added_q = None
+        self.norm_added_k = None
 
         # set attention processor
         # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
@@ -1097,54 +924,54 @@ class Attention(nn.Module):
 
         return encoder_hidden_states
 
-    @torch.no_grad()
-    def fuse_projections(self, fuse=True):
-        device = self.to_q.weight.data.device
-        dtype = self.to_q.weight.data.dtype
+    # @torch.no_grad()
+    # def fuse_projections(self, fuse=True):
+    #     device = self.to_q.weight.data.device
+    #     dtype = self.to_q.weight.data.dtype
 
-        if not self.is_cross_attention:
-            # fetch weight matrices.
-            concatenated_weights = torch.cat([self.to_q.weight.data, self.to_k.weight.data, self.to_v.weight.data])
-            in_features = concatenated_weights.shape[1]
-            out_features = concatenated_weights.shape[0]
+    #     if not self.is_cross_attention:
+    #         # fetch weight matrices.
+    #         concatenated_weights = torch.cat([self.to_q.weight.data, self.to_k.weight.data, self.to_v.weight.data])
+    #         in_features = concatenated_weights.shape[1]
+    #         out_features = concatenated_weights.shape[0]
 
-            # create a new single projection layer and copy over the weights.
-            self.to_qkv = nn.Linear(in_features, out_features, bias=self.use_bias, device=device, dtype=dtype)
-            self.to_qkv.weight.copy_(concatenated_weights)
-            if self.use_bias:
-                concatenated_bias = torch.cat([self.to_q.bias.data, self.to_k.bias.data, self.to_v.bias.data])
-                self.to_qkv.bias.copy_(concatenated_bias)
+    #         # create a new single projection layer and copy over the weights.
+    #         self.to_qkv = nn.Linear(in_features, out_features, bias=self.use_bias, device=device, dtype=dtype)
+    #         self.to_qkv.weight.copy_(concatenated_weights)
+    #         if self.use_bias:
+    #             concatenated_bias = torch.cat([self.to_q.bias.data, self.to_k.bias.data, self.to_v.bias.data])
+    #             self.to_qkv.bias.copy_(concatenated_bias)
 
-        else:
-            concatenated_weights = torch.cat([self.to_k.weight.data, self.to_v.weight.data])
-            in_features = concatenated_weights.shape[1]
-            out_features = concatenated_weights.shape[0]
+    #     else:
+    #         concatenated_weights = torch.cat([self.to_k.weight.data, self.to_v.weight.data])
+    #         in_features = concatenated_weights.shape[1]
+    #         out_features = concatenated_weights.shape[0]
 
-            self.to_kv = nn.Linear(in_features, out_features, bias=self.use_bias, device=device, dtype=dtype)
-            self.to_kv.weight.copy_(concatenated_weights)
-            if self.use_bias:
-                concatenated_bias = torch.cat([self.to_k.bias.data, self.to_v.bias.data])
-                self.to_kv.bias.copy_(concatenated_bias)
+    #         self.to_kv = nn.Linear(in_features, out_features, bias=self.use_bias, device=device, dtype=dtype)
+    #         self.to_kv.weight.copy_(concatenated_weights)
+    #         if self.use_bias:
+    #             concatenated_bias = torch.cat([self.to_k.bias.data, self.to_v.bias.data])
+    #             self.to_kv.bias.copy_(concatenated_bias)
 
-        # handle added projections for SD3 and others.
-        if hasattr(self, "add_q_proj") and hasattr(self, "add_k_proj") and hasattr(self, "add_v_proj"):
-            concatenated_weights = torch.cat(
-                [self.add_q_proj.weight.data, self.add_k_proj.weight.data, self.add_v_proj.weight.data]
-            )
-            in_features = concatenated_weights.shape[1]
-            out_features = concatenated_weights.shape[0]
+    #     # handle added projections for SD3 and others.
+    #     if hasattr(self, "add_q_proj") and hasattr(self, "add_k_proj") and hasattr(self, "add_v_proj"):
+    #         concatenated_weights = torch.cat(
+    #             [self.add_q_proj.weight.data, self.add_k_proj.weight.data, self.add_v_proj.weight.data]
+    #         )
+    #         in_features = concatenated_weights.shape[1]
+    #         out_features = concatenated_weights.shape[0]
 
-            self.to_added_qkv = nn.Linear(
-                in_features, out_features, bias=self.added_proj_bias, device=device, dtype=dtype
-            )
-            self.to_added_qkv.weight.copy_(concatenated_weights)
-            if self.added_proj_bias:
-                concatenated_bias = torch.cat(
-                    [self.add_q_proj.bias.data, self.add_k_proj.bias.data, self.add_v_proj.bias.data]
-                )
-                self.to_added_qkv.bias.copy_(concatenated_bias)
+    #         self.to_added_qkv = nn.Linear(
+    #             in_features, out_features, bias=self.added_proj_bias, device=device, dtype=dtype
+    #         )
+    #         self.to_added_qkv.weight.copy_(concatenated_weights)
+    #         if self.added_proj_bias:
+    #             concatenated_bias = torch.cat(
+    #                 [self.add_q_proj.bias.data, self.add_k_proj.bias.data, self.add_v_proj.bias.data]
+    #             )
+    #             self.to_added_qkv.bias.copy_(concatenated_bias)
 
-        self.fused_projections = fuse
+    #     self.fused_projections = fuse
 
 class AttnProcessor2_0:
     r"""
@@ -1160,7 +987,7 @@ class AttnProcessor2_0:
         attn: Attention,
         hidden_states: torch.Tensor,
         encoder_hidden_states: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
+        # attention_mask: Optional[torch.Tensor] = None,
         temb: Optional[torch.Tensor] = None,
         *args,
         **kwargs,
@@ -1185,16 +1012,16 @@ class AttnProcessor2_0:
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
 
-        if attention_mask is not None:
-            pdb.set_trace()
-            attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-            # scaled_dot_product_attention expects attention_mask shape to be
-            # (batch, heads, source_length, target_length)
-            attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
+        # if attention_mask is not None:
+        #     pdb.set_trace()
+        #     attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+        #     # scaled_dot_product_attention expects attention_mask shape to be
+        #     # (batch, heads, source_length, target_length)
+        #     attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
 
-        if attn.group_norm is not None:
-            pdb.set_trace()
-            hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
+        # if attn.group_norm is not None:
+        #     pdb.set_trace()
+        #     hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
         query = attn.to_q(hidden_states)
 
@@ -1215,12 +1042,12 @@ class AttnProcessor2_0:
         key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
         value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
 
-        if attn.norm_q is not None:
-            pdb.set_trace()
-            query = attn.norm_q(query)
-        if attn.norm_k is not None:
-            pdb.set_trace()
-            key = attn.norm_k(key)
+        # if attn.norm_q is not None:
+        #     pdb.set_trace()
+        #     query = attn.norm_q(query)
+        # if attn.norm_k is not None:
+        #     pdb.set_trace()
+        #     key = attn.norm_k(key)
 
         # the output of sdp = (batch, num_heads, seq_len, head_dim)
         # TODO: add support for attn.scale when we move to Torch 2.1
@@ -1362,7 +1189,7 @@ class TemporalBasicTransformerBlock(nn.Module):
         time_mix_inner_dim: int,
         num_attention_heads: int,
         attention_head_dim: int,
-        cross_attention_dim: = 1024,
+        cross_attention_dim = 1024,
     ):
         super().__init__()
         assert cross_attention_dim is not None
@@ -1388,20 +1215,13 @@ class TemporalBasicTransformerBlock(nn.Module):
         )
 
         # 2. Cross-Attn
-        if cross_attention_dim is not None:
-            # We currently only use AdaLayerNormZero for self attention where there will only be one attention block.
-            # I.e. the number of returned modulation chunks from AdaLayerZero would not make sense if returned during
-            # the second cross attention block.
-            self.norm2 = nn.LayerNorm(time_mix_inner_dim)
-            self.attn2 = Attention(
-                query_dim=time_mix_inner_dim,
-                cross_attention_dim=cross_attention_dim,
-                heads=num_attention_heads,
-                dim_head=attention_head_dim,
-            )  # is self-attn if encoder_hidden_states is none
-        else:
-            self.norm2 = None
-            self.attn2 = None
+        self.norm2 = nn.LayerNorm(time_mix_inner_dim)
+        self.attn2 = Attention(
+            query_dim=time_mix_inner_dim,
+            cross_attention_dim=cross_attention_dim,
+            heads=num_attention_heads,
+            dim_head=attention_head_dim,
+        )  # is self-attn if encoder_hidden_states is none
 
         # 3. Feed-forward
         self.norm3 = nn.LayerNorm(time_mix_inner_dim)
