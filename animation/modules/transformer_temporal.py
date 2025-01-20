@@ -21,14 +21,9 @@ from torch import nn
 import torch.nn.functional as F
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-# from diffusers.models.attention import BasicTransformerBlock, TemporalBasicTransformerBlock
-# from diffusers.models.attention import TemporalBasicTransformerBlock
-
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
-# from diffusers.models.resnet import AlphaBlender
 from animation.modules.attention_processor import AnimationAttnProcessor
-# from animation.modules.attention_processor import Attention
 
 import pdb
 
@@ -36,70 +31,24 @@ class AlphaBlender(nn.Module):
     r"""
     A module to blend spatial and temporal features.
 
-    Parameters:
-        alpha (`float`): The initial value of the blending factor.
-        merge_strategy (`str`, *optional*, defaults to `learned_with_images`):
-            The merge strategy to use for the temporal mixing.
-        switch_spatial_to_temporal_mix (`bool`, *optional*, defaults to `False`):
-            If `True`, switch the spatial and temporal mixing.
     """
-
-    strategies = ["learned", "fixed", "learned_with_images"]
 
     def __init__(
         self,
         alpha: float,
-        merge_strategy: str = "learned_with_images",
-        switch_spatial_to_temporal_mix: bool = False,
     ):
         super().__init__()
-        # alpha = 0.5
-        # merge_strategy = 'learned_with_images'
-        # switch_spatial_to_temporal_mix = False
-
-        self.merge_strategy = merge_strategy
-        self.switch_spatial_to_temporal_mix = switch_spatial_to_temporal_mix  # For TemporalVAE
-
-        if merge_strategy not in self.strategies:
-            raise ValueError(f"merge_strategy needs to be in {self.strategies}")
-
-        if self.merge_strategy == "fixed":
-            self.register_buffer("mix_factor", torch.Tensor([alpha]))
-        elif self.merge_strategy == "learned" or self.merge_strategy == "learned_with_images":
-            self.register_parameter("mix_factor", torch.nn.Parameter(torch.Tensor([alpha])))
-        else:
-            raise ValueError(f"Unknown merge strategy {self.merge_strategy}")
-        # pdb.set_trace()
+        self.register_parameter("mix_factor", torch.nn.Parameter(torch.Tensor([alpha])))
 
     def get_alpha(self, image_only_indicator: torch.Tensor, ndims: int) -> torch.Tensor:
-        if self.merge_strategy == "fixed":
-            alpha = self.mix_factor
+        alpha = torch.where(
+            image_only_indicator.bool(),
+            torch.ones(1, 1, device=image_only_indicator.device),
+            torch.sigmoid(self.mix_factor)[..., None],
+        )
 
-        elif self.merge_strategy == "learned":
-            alpha = torch.sigmoid(self.mix_factor)
-
-        elif self.merge_strategy == "learned_with_images":
-            if image_only_indicator is None:
-                raise ValueError("Please provide image_only_indicator to use learned_with_images merge strategy")
-
-            alpha = torch.where(
-                image_only_indicator.bool(),
-                torch.ones(1, 1, device=image_only_indicator.device),
-                torch.sigmoid(self.mix_factor)[..., None],
-            )
-
-            # (batch, channel, frames, height, width)
-            if ndims == 5:
-                alpha = alpha[:, None, :, None, None]
-            # (batch*frames, height*width, channels)
-            elif ndims == 3:
-                alpha = alpha.reshape(-1)[:, None, None]
-            else:
-                raise ValueError(f"Unexpected ndims {ndims}. Dimensions should be 3 or 5")
-
-        else:
-            raise NotImplementedError
-
+        # (batch, channel, frames, height, width)
+        alpha = alpha.reshape(-1)[:, None, None]
         return alpha
 
     def forward(
@@ -110,9 +59,6 @@ class AlphaBlender(nn.Module):
     ) -> torch.Tensor:
         alpha = self.get_alpha(image_only_indicator, x_spatial.ndim)
         alpha = alpha.to(x_spatial.dtype)
-
-        if self.switch_spatial_to_temporal_mix:
-            alpha = 1.0 - alpha
 
         x = alpha * x_spatial + (1.0 - alpha) * x_temporal
         return x
@@ -486,7 +432,7 @@ class TransformerSpatioTemporalModel(nn.Module):
         #   (linear_2): Linear(in_features=1280, out_features=320, bias=True)
         # )
         self.time_proj = Timesteps(in_channels, True, 0)
-        self.time_mixer = AlphaBlender(alpha=0.5, merge_strategy="learned_with_images")
+        self.time_mixer = AlphaBlender(alpha=0.5)
 
         # 4. Define output layers
         self.proj_out = nn.Linear(inner_dim, in_channels)
@@ -745,157 +691,157 @@ class Attention(nn.Module):
             )
         self.set_processor(processor)
 
-    def set_use_npu_flash_attention(self, use_npu_flash_attention: bool) -> None:
-        r"""
-        Set whether to use npu flash attention from `torch_npu` or not.
+    # def set_use_npu_flash_attention(self, use_npu_flash_attention: bool) -> None:
+    #     r"""
+    #     Set whether to use npu flash attention from `torch_npu` or not.
 
-        """
-        if use_npu_flash_attention:
-            processor = AttnProcessorNPU()
-        else:
-            # set attention processor
-            # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
-            # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
-            # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
-            processor = (
-                AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
-            )
-        self.set_processor(processor)
+    #     """
+    #     if use_npu_flash_attention:
+    #         processor = AttnProcessorNPU()
+    #     else:
+    #         # set attention processor
+    #         # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
+    #         # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
+    #         # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
+    #         processor = (
+    #             AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
+    #         )
+    #     self.set_processor(processor)
 
-    def set_use_memory_efficient_attention_xformers(
-        self, use_memory_efficient_attention_xformers: bool, attention_op: Optional[Callable] = None
-    ) -> None:
-        r"""
-        Set whether to use memory efficient attention from `xformers` or not.
+    # def set_use_memory_efficient_attention_xformers(
+    #     self, use_memory_efficient_attention_xformers: bool, attention_op: Optional[Callable] = None
+    # ) -> None:
+    #     r"""
+    #     Set whether to use memory efficient attention from `xformers` or not.
 
-        Args:
-            use_memory_efficient_attention_xformers (`bool`):
-                Whether to use memory efficient attention from `xformers` or not.
-            attention_op (`Callable`, *optional*):
-                The attention operation to use. Defaults to `None` which uses the default attention operation from
-                `xformers`.
-        """
-        is_custom_diffusion = hasattr(self, "processor") and isinstance(
-            self.processor,
-            (CustomDiffusionAttnProcessor, CustomDiffusionXFormersAttnProcessor, CustomDiffusionAttnProcessor2_0),
-        )
-        is_added_kv_processor = hasattr(self, "processor") and isinstance(
-            self.processor,
-            (
-                AttnAddedKVProcessor,
-                AttnAddedKVProcessor2_0,
-                SlicedAttnAddedKVProcessor,
-                XFormersAttnAddedKVProcessor,
-            ),
-        )
+    #     Args:
+    #         use_memory_efficient_attention_xformers (`bool`):
+    #             Whether to use memory efficient attention from `xformers` or not.
+    #         attention_op (`Callable`, *optional*):
+    #             The attention operation to use. Defaults to `None` which uses the default attention operation from
+    #             `xformers`.
+    #     """
+    #     is_custom_diffusion = hasattr(self, "processor") and isinstance(
+    #         self.processor,
+    #         (CustomDiffusionAttnProcessor, CustomDiffusionXFormersAttnProcessor, CustomDiffusionAttnProcessor2_0),
+    #     )
+    #     is_added_kv_processor = hasattr(self, "processor") and isinstance(
+    #         self.processor,
+    #         (
+    #             AttnAddedKVProcessor,
+    #             AttnAddedKVProcessor2_0,
+    #             SlicedAttnAddedKVProcessor,
+    #             XFormersAttnAddedKVProcessor,
+    #         ),
+    #     )
 
-        if use_memory_efficient_attention_xformers:
-            if is_added_kv_processor and is_custom_diffusion:
-                raise NotImplementedError(
-                    f"Memory efficient attention is currently not supported for custom diffusion for attention processor type {self.processor}"
-                )
-            if not is_xformers_available():
-                raise ModuleNotFoundError(
-                    (
-                        "Refer to https://github.com/facebookresearch/xformers for more information on how to install"
-                        " xformers"
-                    ),
-                    name="xformers",
-                )
-            elif not torch.cuda.is_available():
-                raise ValueError(
-                    "torch.cuda.is_available() should be True but is False. xformers' memory efficient attention is"
-                    " only available for GPU "
-                )
-            else:
-                try:
-                    # Make sure we can run the memory efficient attention
-                    _ = xformers.ops.memory_efficient_attention(
-                        torch.randn((1, 2, 40), device="cuda"),
-                        torch.randn((1, 2, 40), device="cuda"),
-                        torch.randn((1, 2, 40), device="cuda"),
-                    )
-                except Exception as e:
-                    raise e
+    #     if use_memory_efficient_attention_xformers:
+    #         if is_added_kv_processor and is_custom_diffusion:
+    #             raise NotImplementedError(
+    #                 f"Memory efficient attention is currently not supported for custom diffusion for attention processor type {self.processor}"
+    #             )
+    #         if not is_xformers_available():
+    #             raise ModuleNotFoundError(
+    #                 (
+    #                     "Refer to https://github.com/facebookresearch/xformers for more information on how to install"
+    #                     " xformers"
+    #                 ),
+    #                 name="xformers",
+    #             )
+    #         elif not torch.cuda.is_available():
+    #             raise ValueError(
+    #                 "torch.cuda.is_available() should be True but is False. xformers' memory efficient attention is"
+    #                 " only available for GPU "
+    #             )
+    #         else:
+    #             try:
+    #                 # Make sure we can run the memory efficient attention
+    #                 _ = xformers.ops.memory_efficient_attention(
+    #                     torch.randn((1, 2, 40), device="cuda"),
+    #                     torch.randn((1, 2, 40), device="cuda"),
+    #                     torch.randn((1, 2, 40), device="cuda"),
+    #                 )
+    #             except Exception as e:
+    #                 raise e
 
-            if is_custom_diffusion:
-                processor = CustomDiffusionXFormersAttnProcessor(
-                    train_kv=self.processor.train_kv,
-                    train_q_out=self.processor.train_q_out,
-                    hidden_size=self.processor.hidden_size,
-                    cross_attention_dim=self.processor.cross_attention_dim,
-                    attention_op=attention_op,
-                )
-                processor.load_state_dict(self.processor.state_dict())
-                if hasattr(self.processor, "to_k_custom_diffusion"):
-                    processor.to(self.processor.to_k_custom_diffusion.weight.device)
-            elif is_added_kv_processor:
-                # TODO(Patrick, Suraj, William) - currently xformers doesn't work for UnCLIP
-                # which uses this type of cross attention ONLY because the attention mask of format
-                # [0, ..., -10.000, ..., 0, ...,] is not supported
-                # throw warning
-                logger.info(
-                    "Memory efficient attention with `xformers` might currently not work correctly if an attention mask is required for the attention operation."
-                )
-                processor = XFormersAttnAddedKVProcessor(attention_op=attention_op)
-            else:
-                processor = XFormersAttnProcessor(attention_op=attention_op)
-        else:
-            if is_custom_diffusion:
-                attn_processor_class = (
-                    CustomDiffusionAttnProcessor2_0
-                    if hasattr(F, "scaled_dot_product_attention")
-                    else CustomDiffusionAttnProcessor
-                )
-                processor = attn_processor_class(
-                    train_kv=self.processor.train_kv,
-                    train_q_out=self.processor.train_q_out,
-                    hidden_size=self.processor.hidden_size,
-                    cross_attention_dim=self.processor.cross_attention_dim,
-                )
-                processor.load_state_dict(self.processor.state_dict())
-                if hasattr(self.processor, "to_k_custom_diffusion"):
-                    processor.to(self.processor.to_k_custom_diffusion.weight.device)
-            else:
-                # set attention processor
-                # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
-                # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
-                # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
-                processor = (
-                    AttnProcessor2_0()
-                    if hasattr(F, "scaled_dot_product_attention") and self.scale_qk
-                    else AttnProcessor()
-                )
+    #         if is_custom_diffusion:
+    #             processor = CustomDiffusionXFormersAttnProcessor(
+    #                 train_kv=self.processor.train_kv,
+    #                 train_q_out=self.processor.train_q_out,
+    #                 hidden_size=self.processor.hidden_size,
+    #                 cross_attention_dim=self.processor.cross_attention_dim,
+    #                 attention_op=attention_op,
+    #             )
+    #             processor.load_state_dict(self.processor.state_dict())
+    #             if hasattr(self.processor, "to_k_custom_diffusion"):
+    #                 processor.to(self.processor.to_k_custom_diffusion.weight.device)
+    #         elif is_added_kv_processor:
+    #             # TODO(Patrick, Suraj, William) - currently xformers doesn't work for UnCLIP
+    #             # which uses this type of cross attention ONLY because the attention mask of format
+    #             # [0, ..., -10.000, ..., 0, ...,] is not supported
+    #             # throw warning
+    #             logger.info(
+    #                 "Memory efficient attention with `xformers` might currently not work correctly if an attention mask is required for the attention operation."
+    #             )
+    #             processor = XFormersAttnAddedKVProcessor(attention_op=attention_op)
+    #         else:
+    #             processor = XFormersAttnProcessor(attention_op=attention_op)
+    #     else:
+    #         if is_custom_diffusion:
+    #             attn_processor_class = (
+    #                 CustomDiffusionAttnProcessor2_0
+    #                 if hasattr(F, "scaled_dot_product_attention")
+    #                 else CustomDiffusionAttnProcessor
+    #             )
+    #             processor = attn_processor_class(
+    #                 train_kv=self.processor.train_kv,
+    #                 train_q_out=self.processor.train_q_out,
+    #                 hidden_size=self.processor.hidden_size,
+    #                 cross_attention_dim=self.processor.cross_attention_dim,
+    #             )
+    #             processor.load_state_dict(self.processor.state_dict())
+    #             if hasattr(self.processor, "to_k_custom_diffusion"):
+    #                 processor.to(self.processor.to_k_custom_diffusion.weight.device)
+    #         else:
+    #             # set attention processor
+    #             # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
+    #             # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
+    #             # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
+    #             processor = (
+    #                 AttnProcessor2_0()
+    #                 if hasattr(F, "scaled_dot_product_attention") and self.scale_qk
+    #                 else AttnProcessor()
+    #             )
 
-        self.set_processor(processor)
+    #     self.set_processor(processor)
 
-    def set_attention_slice(self, slice_size: int) -> None:
-        r"""
-        Set the slice size for attention computation.
+    # def set_attention_slice(self, slice_size: int) -> None:
+    #     r"""
+    #     Set the slice size for attention computation.
 
-        Args:
-            slice_size (`int`):
-                The slice size for attention computation.
-        """
-        if slice_size is not None and slice_size > self.sliceable_head_dim:
-            raise ValueError(f"slice_size {slice_size} has to be smaller or equal to {self.sliceable_head_dim}.")
+    #     Args:
+    #         slice_size (`int`):
+    #             The slice size for attention computation.
+    #     """
+    #     if slice_size is not None and slice_size > self.sliceable_head_dim:
+    #         raise ValueError(f"slice_size {slice_size} has to be smaller or equal to {self.sliceable_head_dim}.")
 
-        if slice_size is not None and self.added_kv_proj_dim is not None:
-            processor = SlicedAttnAddedKVProcessor(slice_size)
-        elif slice_size is not None:
-            processor = SlicedAttnProcessor(slice_size)
-        elif self.added_kv_proj_dim is not None:
-            processor = AttnAddedKVProcessor()
-        else:
-            # set attention processor
-            # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
-            # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
-            # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
-            processor = (
-                AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
-            )
+    #     if slice_size is not None and self.added_kv_proj_dim is not None:
+    #         processor = SlicedAttnAddedKVProcessor(slice_size)
+    #     elif slice_size is not None:
+    #         processor = SlicedAttnProcessor(slice_size)
+    #     elif self.added_kv_proj_dim is not None:
+    #         processor = AttnAddedKVProcessor()
+    #     else:
+    #         # set attention processor
+    #         # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
+    #         # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
+    #         # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
+    #         processor = (
+    #             AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
+    #         )
 
-        self.set_processor(processor)
+    #     self.set_processor(processor)
 
     def set_processor(self, processor: "AttnProcessor") -> None:
         r"""
