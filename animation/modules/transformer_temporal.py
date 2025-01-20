@@ -88,41 +88,41 @@ class BasicTransformerBlock(nn.Module):
         dropout=0.0,
         cross_attention_dim  = 1024,
         activation_fn: str = "geglu",
-        num_embeds_ada_norm: Optional[int] = None,
+        # num_embeds_ada_norm: Optional[int] = None,
         attention_bias: bool = False,
         # only_cross_attention: bool = False,
-        double_self_attention: bool = False,
+        # double_self_attention: bool = False,
         upcast_attention: bool = False,
         norm_elementwise_affine: bool = True,
-        norm_type: str = "layer_norm",  # 'layer_norm', 'ada_norm', 'ada_norm_zero', 'ada_norm_single', 'ada_norm_continuous', 'layer_norm_i2vgen'
+        # norm_type: str = "layer_norm",  # 'layer_norm', 'ada_norm', 'ada_norm_zero', 'ada_norm_single', 'ada_norm_continuous', 'layer_norm_i2vgen'
         norm_eps: float = 1e-5,
         final_dropout: bool = False,
-        attention_type: str = "default",
-        positional_embeddings: Optional[str] = None,
-        num_positional_embeddings: Optional[int] = None,
-        ada_norm_continous_conditioning_embedding_dim: Optional[int] = None,
-        ada_norm_bias: Optional[int] = None,
+        # attention_type: str = "default",
+        # positional_embeddings: Optional[str] = None,
+        # num_positional_embeddings: Optional[int] = None,
+        # ada_norm_continous_conditioning_embedding_dim: Optional[int] = None,
+        # ada_norm_bias: Optional[int] = None,
         ff_inner_dim: Optional[int] = None,
         ff_bias: bool = True,
         attention_out_bias: bool = True,
     ):
         super().__init__()
-        self.dim = dim
-        self.num_attention_heads = num_attention_heads
-        self.attention_head_dim = attention_head_dim
-        self.dropout = dropout
+        # self.dim = dim
+        # self.num_attention_heads = num_attention_heads
+        # self.attention_head_dim = attention_head_dim
+        # self.dropout = dropout
         self.cross_attention_dim = cross_attention_dim
-        self.activation_fn = activation_fn
-        self.attention_bias = attention_bias
-        self.double_self_attention = double_self_attention
-        self.norm_elementwise_affine = norm_elementwise_affine
-        self.positional_embeddings = positional_embeddings
-        self.num_positional_embeddings = num_positional_embeddings
+        # self.activation_fn = activation_fn
+        # self.attention_bias = attention_bias
+        # self.double_self_attention = double_self_attention
+        # self.norm_elementwise_affine = norm_elementwise_affine
+        # self.positional_embeddings = positional_embeddings
+        # self.num_positional_embeddings = num_positional_embeddings
         # self.only_cross_attention = only_cross_attention
 
 
-        self.norm_type = norm_type
-        self.num_embeds_ada_norm = num_embeds_ada_norm
+        # self.norm_type = norm_type
+        # self.num_embeds_ada_norm = num_embeds_ada_norm
 
 
         self.pos_embed = None
@@ -146,7 +146,7 @@ class BasicTransformerBlock(nn.Module):
         self.norm2 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
         self.attn2 = Attention(
             query_dim=dim,
-            cross_attention_dim=cross_attention_dim if not double_self_attention else None,
+            cross_attention_dim=cross_attention_dim, # if not double_self_attention else None,
             heads=num_attention_heads,
             dim_head=attention_head_dim,
             dropout=dropout,
@@ -170,13 +170,13 @@ class BasicTransformerBlock(nn.Module):
         # 4. Fuser
 
         # let chunk size default to None
-        self._chunk_size = None
-        self._chunk_dim = 0
+        # self._chunk_size = None
+        # self._chunk_dim = 0
 
-    def set_chunk_feed_forward(self, chunk_size: Optional[int], dim: int = 0):
-        # Sets chunk feed-forward
-        self._chunk_size = chunk_size
-        self._chunk_dim = dim
+    # def set_chunk_feed_forward(self, chunk_size: Optional[int], dim: int = 0):
+    #     # Sets chunk feed-forward
+    #     self._chunk_size = chunk_size
+    #     self._chunk_dim = dim
 
     def forward(
         self,
@@ -220,18 +220,19 @@ class BasicTransformerBlock(nn.Module):
         # 3. Cross-Attention
         if self.attn2 is not None:
             # ==> pdb.set_trace()
-            if self.norm_type == "ada_norm":
-                norm_hidden_states = self.norm2(hidden_states, timestep)
-            elif self.norm_type in ["ada_norm_zero", "layer_norm", "layer_norm_i2vgen"]:
-                norm_hidden_states = self.norm2(hidden_states)
-            elif self.norm_type == "ada_norm_single":
-                # For PixArt norm2 isn't applied here:
-                # https://github.com/PixArt-alpha/PixArt-alpha/blob/0f55e922376d8b797edd44d25d0e7464b260dcab/diffusion/model/nets/PixArtMS.py#L70C1-L76C103
-                norm_hidden_states = hidden_states
-            elif self.norm_type == "ada_norm_continuous":
-                norm_hidden_states = self.norm2(hidden_states, added_cond_kwargs["pooled_text_emb"])
-            else:
-                raise ValueError("Incorrect norm")
+            # if self.norm_type == "ada_norm":
+            #     norm_hidden_states = self.norm2(hidden_states, timestep)
+            # elif self.norm_type in ["ada_norm_zero", "layer_norm", "layer_norm_i2vgen"]:
+            #     norm_hidden_states = self.norm2(hidden_states)
+            # elif self.norm_type == "ada_norm_single":
+            #     # For PixArt norm2 isn't applied here:
+            #     # https://github.com/PixArt-alpha/PixArt-alpha/blob/0f55e922376d8b797edd44d25d0e7464b260dcab/diffusion/model/nets/PixArtMS.py#L70C1-L76C103
+            #     norm_hidden_states = hidden_states
+            # elif self.norm_type == "ada_norm_continuous":
+            #     norm_hidden_states = self.norm2(hidden_states, added_cond_kwargs["pooled_text_emb"])
+            # else:
+            #     raise ValueError("Incorrect norm")
+            norm_hidden_states = self.norm2(hidden_states)
 
             # if self.pos_embed is not None and self.norm_type != "ada_norm_single":
             #     norm_hidden_states = self.pos_embed(norm_hidden_states)
@@ -246,11 +247,12 @@ class BasicTransformerBlock(nn.Module):
 
         # 4. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
-        if self._chunk_size is not None:
-            # "feed_forward_chunk_size" can be used to save memory
-            ff_output = _chunked_feed_forward(self.ff, norm_hidden_states, self._chunk_dim, self._chunk_size)
-        else:
-            ff_output = self.ff(norm_hidden_states)
+        # if self._chunk_size is not None:
+        #     # "feed_forward_chunk_size" can be used to save memory
+        #     ff_output = _chunked_feed_forward(self.ff, norm_hidden_states, self._chunk_dim, self._chunk_size)
+        # else:
+        #     ff_output = self.ff(norm_hidden_states)
+        ff_output = self.ff(norm_hidden_states)
 
         hidden_states = ff_output + hidden_states
         if hidden_states.ndim == 4:
@@ -406,6 +408,10 @@ class TransformerSpatioTemporalModel(nn.Module):
 class Attention(nn.Module):
     r"""
     A cross attention layer.
+        query_dim=time_mix_inner_dim,
+        heads=num_attention_heads,
+        dim_head=attention_head_dim,
+        cross_attention_dim=None,
 
     """
 
@@ -414,45 +420,41 @@ class Attention(nn.Module):
         query_dim: int,
         cross_attention_dim: Optional[int] = None, # 1024 or None
         heads: int = 8,
-        kv_heads: Optional[int] = None,
         dim_head: int = 64,
+        # kv_heads: Optional[int] = None,
         dropout: float = 0.0,
         bias: bool = False,
         upcast_attention: bool = False,
-        upcast_softmax: bool = False,
-        cross_attention_norm: Optional[str] = None,
-        cross_attention_norm_num_groups: int = 32,
-        added_kv_proj_dim: Optional[int] = None,
+        # upcast_softmax: bool = False,
+        # cross_attention_norm: Optional[str] = None,
+        # cross_attention_norm_num_groups: int = 32,
+        # added_kv_proj_dim: Optional[int] = None,
         added_proj_bias: Optional[bool] = True,
         out_bias: bool = True,
         scale_qk: bool = True,
-        # only_cross_attention: bool = False,
         eps: float = 1e-5,
         rescale_output_factor: float = 1.0,
         residual_connection: bool = False,
         processor: Optional["AttnProcessor"] = None,
         out_dim: int = None,
-        pre_only=False,
+        # pre_only=False,
     ):
         super().__init__()
 
-        # To prevent circular import.
-        # from .normalization import FP32LayerNorm, RMSNorm
-
         self.inner_dim = out_dim if out_dim is not None else dim_head * heads
-        self.inner_kv_dim = self.inner_dim if kv_heads is None else dim_head * kv_heads
+        self.inner_kv_dim = self.inner_dim # if kv_heads is None else dim_head * kv_heads
         self.query_dim = query_dim
-        self.use_bias = bias
-        self.is_cross_attention = cross_attention_dim is not None
+        # self.use_bias = bias
+        # self.is_cross_attention = cross_attention_dim is not None
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
         self.upcast_attention = upcast_attention
-        self.upcast_softmax = upcast_softmax
+        # self.upcast_softmax = upcast_softmax
         self.rescale_output_factor = rescale_output_factor
         self.residual_connection = residual_connection
-        self.dropout = dropout
-        self.fused_projections = False
+        # self.dropout = dropout
+        # self.fused_projections = False
         self.out_dim = out_dim if out_dim is not None else query_dim
-        self.pre_only = pre_only
+        # self.pre_only = pre_only
 
         self.scale_qk = scale_qk
 
@@ -463,15 +465,8 @@ class Attention(nn.Module):
         # for slice_size > 0 the attention score computation
         # is split across the batch axis to save memory
         # You can set slice_size with `set_attention_slice`
-        self.sliceable_head_dim = heads
-
-        self.added_kv_proj_dim = added_kv_proj_dim
-        # self.only_cross_attention = only_cross_attention
-
-        # if self.added_kv_proj_dim is None and self.only_cross_attention:
-        #     raise ValueError(
-        #         "`only_cross_attention` can only be set to True if `added_kv_proj_dim` is not None. Make sure to set either `only_cross_attention=False` or define `added_kv_proj_dim`."
-        #     )
+        # self.sliceable_head_dim = heads
+        # self.added_kv_proj_dim = added_kv_proj_dim
 
         self.group_norm = None
         self.spatial_norm = None
@@ -479,58 +474,15 @@ class Attention(nn.Module):
         self.norm_k = None
 
         # cross_attention_dim == 1024 or None
-        assert cross_attention_norm == None
-
-        if cross_attention_norm is None:
-            self.norm_cross = None
-        elif cross_attention_norm == "layer_norm":
-            self.norm_cross = nn.LayerNorm(self.cross_attention_dim)
-        elif cross_attention_norm == "group_norm":
-            if self.added_kv_proj_dim is not None:
-                # The given `encoder_hidden_states` are initially of shape
-                # (batch_size, seq_len, added_kv_proj_dim) before being projected
-                # to (batch_size, seq_len, cross_attention_dim). The norm is applied
-                # before the projection, so we need to use `added_kv_proj_dim` as
-                # the number of channels for the group norm.
-                norm_cross_num_channels = added_kv_proj_dim
-            else:
-                norm_cross_num_channels = self.cross_attention_dim
-
-            self.norm_cross = nn.GroupNorm(
-                num_channels=norm_cross_num_channels, num_groups=cross_attention_norm_num_groups, eps=1e-5, affine=True
-            )
-        else:
-            raise ValueError(
-                f"unknown cross_attention_norm: {cross_attention_norm}. Should be None, 'layer_norm' or 'group_norm'"
-            )
-
+        self.norm_cross = None
         self.to_q = nn.Linear(query_dim, self.inner_dim, bias=bias)
-
-        # if not self.only_cross_attention:
-        #     # only relevant for the `AddedKVProcessor` classes
-        #     self.to_k = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
-        #     self.to_v = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
-        # else:
-        #     pdb.set_trace()
-        #     self.to_k = None
-        #     self.to_v = None
         self.to_k = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
         self.to_v = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
 
-
         self.added_proj_bias = added_proj_bias
-        # if self.added_kv_proj_dim is not None:
-        #     self.add_k_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
-        #     self.add_v_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
-        #     # if self.context_pre_only is not None:
-        #     #     self.add_q_proj = nn.Linear(added_kv_proj_dim, self.inner_dim, bias=added_proj_bias)
-
-        if not self.pre_only:
-            self.to_out = nn.ModuleList([])
-            self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=out_bias))
-            self.to_out.append(nn.Dropout(dropout))
-        else:
-            pdb.set_trace()
+        self.to_out = nn.ModuleList([])
+        self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=out_bias))
+        self.to_out.append(nn.Dropout(dropout))
 
 
         self.norm_added_q = None
@@ -548,157 +500,6 @@ class Attention(nn.Module):
             )
         self.set_processor(processor)
 
-    # def set_use_npu_flash_attention(self, use_npu_flash_attention: bool) -> None:
-    #     r"""
-    #     Set whether to use npu flash attention from `torch_npu` or not.
-
-    #     """
-    #     if use_npu_flash_attention:
-    #         processor = AttnProcessorNPU()
-    #     else:
-    #         # set attention processor
-    #         # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
-    #         # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
-    #         # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
-    #         processor = (
-    #             AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
-    #         )
-    #     self.set_processor(processor)
-
-    # def set_use_memory_efficient_attention_xformers(
-    #     self, use_memory_efficient_attention_xformers: bool, attention_op: Optional[Callable] = None
-    # ) -> None:
-    #     r"""
-    #     Set whether to use memory efficient attention from `xformers` or not.
-
-    #     Args:
-    #         use_memory_efficient_attention_xformers (`bool`):
-    #             Whether to use memory efficient attention from `xformers` or not.
-    #         attention_op (`Callable`, *optional*):
-    #             The attention operation to use. Defaults to `None` which uses the default attention operation from
-    #             `xformers`.
-    #     """
-    #     is_custom_diffusion = hasattr(self, "processor") and isinstance(
-    #         self.processor,
-    #         (CustomDiffusionAttnProcessor, CustomDiffusionXFormersAttnProcessor, CustomDiffusionAttnProcessor2_0),
-    #     )
-    #     is_added_kv_processor = hasattr(self, "processor") and isinstance(
-    #         self.processor,
-    #         (
-    #             AttnAddedKVProcessor,
-    #             AttnAddedKVProcessor2_0,
-    #             SlicedAttnAddedKVProcessor,
-    #             XFormersAttnAddedKVProcessor,
-    #         ),
-    #     )
-
-    #     if use_memory_efficient_attention_xformers:
-    #         if is_added_kv_processor and is_custom_diffusion:
-    #             raise NotImplementedError(
-    #                 f"Memory efficient attention is currently not supported for custom diffusion for attention processor type {self.processor}"
-    #             )
-    #         if not is_xformers_available():
-    #             raise ModuleNotFoundError(
-    #                 (
-    #                     "Refer to https://github.com/facebookresearch/xformers for more information on how to install"
-    #                     " xformers"
-    #                 ),
-    #                 name="xformers",
-    #             )
-    #         elif not torch.cuda.is_available():
-    #             raise ValueError(
-    #                 "torch.cuda.is_available() should be True but is False. xformers' memory efficient attention is"
-    #                 " only available for GPU "
-    #             )
-    #         else:
-    #             try:
-    #                 # Make sure we can run the memory efficient attention
-    #                 _ = xformers.ops.memory_efficient_attention(
-    #                     torch.randn((1, 2, 40), device="cuda"),
-    #                     torch.randn((1, 2, 40), device="cuda"),
-    #                     torch.randn((1, 2, 40), device="cuda"),
-    #                 )
-    #             except Exception as e:
-    #                 raise e
-
-    #         if is_custom_diffusion:
-    #             processor = CustomDiffusionXFormersAttnProcessor(
-    #                 train_kv=self.processor.train_kv,
-    #                 train_q_out=self.processor.train_q_out,
-    #                 hidden_size=self.processor.hidden_size,
-    #                 cross_attention_dim=self.processor.cross_attention_dim,
-    #                 attention_op=attention_op,
-    #             )
-    #             processor.load_state_dict(self.processor.state_dict())
-    #             if hasattr(self.processor, "to_k_custom_diffusion"):
-    #                 processor.to(self.processor.to_k_custom_diffusion.weight.device)
-    #         elif is_added_kv_processor:
-    #             # TODO(Patrick, Suraj, William) - currently xformers doesn't work for UnCLIP
-    #             # which uses this type of cross attention ONLY because the attention mask of format
-    #             # [0, ..., -10.000, ..., 0, ...,] is not supported
-    #             # throw warning
-    #             logger.info(
-    #                 "Memory efficient attention with `xformers` might currently not work correctly if an attention mask is required for the attention operation."
-    #             )
-    #             processor = XFormersAttnAddedKVProcessor(attention_op=attention_op)
-    #         else:
-    #             processor = XFormersAttnProcessor(attention_op=attention_op)
-    #     else:
-    #         if is_custom_diffusion:
-    #             attn_processor_class = (
-    #                 CustomDiffusionAttnProcessor2_0
-    #                 if hasattr(F, "scaled_dot_product_attention")
-    #                 else CustomDiffusionAttnProcessor
-    #             )
-    #             processor = attn_processor_class(
-    #                 train_kv=self.processor.train_kv,
-    #                 train_q_out=self.processor.train_q_out,
-    #                 hidden_size=self.processor.hidden_size,
-    #                 cross_attention_dim=self.processor.cross_attention_dim,
-    #             )
-    #             processor.load_state_dict(self.processor.state_dict())
-    #             if hasattr(self.processor, "to_k_custom_diffusion"):
-    #                 processor.to(self.processor.to_k_custom_diffusion.weight.device)
-    #         else:
-    #             # set attention processor
-    #             # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
-    #             # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
-    #             # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
-    #             processor = (
-    #                 AttnProcessor2_0()
-    #                 if hasattr(F, "scaled_dot_product_attention") and self.scale_qk
-    #                 else AttnProcessor()
-    #             )
-
-    #     self.set_processor(processor)
-
-    # def set_attention_slice(self, slice_size: int) -> None:
-    #     r"""
-    #     Set the slice size for attention computation.
-
-    #     Args:
-    #         slice_size (`int`):
-    #             The slice size for attention computation.
-    #     """
-    #     if slice_size is not None and slice_size > self.sliceable_head_dim:
-    #         raise ValueError(f"slice_size {slice_size} has to be smaller or equal to {self.sliceable_head_dim}.")
-
-    #     if slice_size is not None and self.added_kv_proj_dim is not None:
-    #         processor = SlicedAttnAddedKVProcessor(slice_size)
-    #     elif slice_size is not None:
-    #         processor = SlicedAttnProcessor(slice_size)
-    #     elif self.added_kv_proj_dim is not None:
-    #         processor = AttnAddedKVProcessor()
-    #     else:
-    #         # set attention processor
-    #         # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
-    #         # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
-    #         # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
-    #         processor = (
-    #             AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
-    #         )
-
-    #     self.set_processor(processor)
 
     def set_processor(self, processor: "AttnProcessor") -> None:
         r"""
@@ -723,13 +524,6 @@ class Attention(nn.Module):
     def get_processor(self, return_deprecated_lora: bool = False) -> "AttentionProcessor":
         r"""
         Get the attention processor in use.
-
-        Args:
-            return_deprecated_lora (`bool`, *optional*, defaults to `False`):
-                Set to `True` to return the deprecated LoRA attention processor.
-
-        Returns:
-            "AttentionProcessor": The attention processor in use.
         """
         if not return_deprecated_lora:
             return self.processor
@@ -793,14 +587,6 @@ class Attention(nn.Module):
         r"""
         Reshape the tensor from `[batch_size, seq_len, dim]` to `[batch_size, seq_len, heads, dim // heads]` `heads` is
         the number of heads initialized while constructing the `Attention` class.
-
-        Args:
-            tensor (`torch.Tensor`): The tensor to reshape.
-            out_dim (`int`, *optional*, defaults to `3`): The output dimension of the tensor. If `3`, the tensor is
-                reshaped to `[batch_size * heads, seq_len, dim // heads]`.
-
-        Returns:
-            `torch.Tensor`: The reshaped tensor.
         """
         head_size = self.heads
         if tensor.ndim == 3:
@@ -855,8 +641,8 @@ class Attention(nn.Module):
         )
         del baddbmm_input
 
-        if self.upcast_softmax:
-            attention_scores = attention_scores.float()
+        # if self.upcast_softmax:
+        #     attention_scores = attention_scores.float()
 
         attention_probs = attention_scores.softmax(dim=-1)
         del attention_scores
@@ -929,54 +715,6 @@ class Attention(nn.Module):
 
         return encoder_hidden_states
 
-    # @torch.no_grad()
-    # def fuse_projections(self, fuse=True):
-    #     device = self.to_q.weight.data.device
-    #     dtype = self.to_q.weight.data.dtype
-
-    #     if not self.is_cross_attention:
-    #         # fetch weight matrices.
-    #         concatenated_weights = torch.cat([self.to_q.weight.data, self.to_k.weight.data, self.to_v.weight.data])
-    #         in_features = concatenated_weights.shape[1]
-    #         out_features = concatenated_weights.shape[0]
-
-    #         # create a new single projection layer and copy over the weights.
-    #         self.to_qkv = nn.Linear(in_features, out_features, bias=self.use_bias, device=device, dtype=dtype)
-    #         self.to_qkv.weight.copy_(concatenated_weights)
-    #         if self.use_bias:
-    #             concatenated_bias = torch.cat([self.to_q.bias.data, self.to_k.bias.data, self.to_v.bias.data])
-    #             self.to_qkv.bias.copy_(concatenated_bias)
-
-    #     else:
-    #         concatenated_weights = torch.cat([self.to_k.weight.data, self.to_v.weight.data])
-    #         in_features = concatenated_weights.shape[1]
-    #         out_features = concatenated_weights.shape[0]
-
-    #         self.to_kv = nn.Linear(in_features, out_features, bias=self.use_bias, device=device, dtype=dtype)
-    #         self.to_kv.weight.copy_(concatenated_weights)
-    #         if self.use_bias:
-    #             concatenated_bias = torch.cat([self.to_k.bias.data, self.to_v.bias.data])
-    #             self.to_kv.bias.copy_(concatenated_bias)
-
-    #     # handle added projections for SD3 and others.
-    #     if hasattr(self, "add_q_proj") and hasattr(self, "add_k_proj") and hasattr(self, "add_v_proj"):
-    #         concatenated_weights = torch.cat(
-    #             [self.add_q_proj.weight.data, self.add_k_proj.weight.data, self.add_v_proj.weight.data]
-    #         )
-    #         in_features = concatenated_weights.shape[1]
-    #         out_features = concatenated_weights.shape[0]
-
-    #         self.to_added_qkv = nn.Linear(
-    #             in_features, out_features, bias=self.added_proj_bias, device=device, dtype=dtype
-    #         )
-    #         self.to_added_qkv.weight.copy_(concatenated_weights)
-    #         if self.added_proj_bias:
-    #             concatenated_bias = torch.cat(
-    #                 [self.add_q_proj.bias.data, self.add_k_proj.bias.data, self.add_v_proj.bias.data]
-    #             )
-    #             self.to_added_qkv.bias.copy_(concatenated_bias)
-
-    #     self.fused_projections = fuse
 
 class AttnProcessor2_0:
     r"""
@@ -1017,24 +755,10 @@ class AttnProcessor2_0:
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
 
-        # if attention_mask is not None:
-        #     pdb.set_trace()
-        #     attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-        #     # scaled_dot_product_attention expects attention_mask shape to be
-        #     # (batch, heads, source_length, target_length)
-        #     attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
-
-        # if attn.group_norm is not None:
-        #     pdb.set_trace()
-        #     hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
-
         query = attn.to_q(hidden_states)
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
-        # elif attn.norm_cross:
-        #     pdb.set_trace()
-        #     encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
 
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
@@ -1047,15 +771,6 @@ class AttnProcessor2_0:
         key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
         value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
 
-        # if attn.norm_q is not None:
-        #     pdb.set_trace()
-        #     query = attn.norm_q(query)
-        # if attn.norm_k is not None:
-        #     pdb.set_trace()
-        #     key = attn.norm_k(key)
-
-        # the output of sdp = (batch, num_heads, seq_len, head_dim)
-        # TODO: add support for attn.scale when we move to Torch 2.1
         hidden_states = F.scaled_dot_product_attention(
             query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
         )
@@ -1073,13 +788,6 @@ class AttnProcessor2_0:
             hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
         assert attn.residual_connection == False
-        # if attn.residual_connection:
-        #     pdb.set_trace()
-        #     hidden_states = hidden_states + residual
-
-        # assert attn.rescale_output_factor == 1.0
-        # hidden_states = hidden_states / attn.rescale_output_factor
-
         return hidden_states
 
 class FeedForward(nn.Module):
@@ -1102,6 +810,8 @@ class FeedForward(nn.Module):
         if inner_dim is None:
             inner_dim = int(dim * mult)
         dim_out = dim_out if dim_out is not None else dim
+
+        assert activation_fn == "geglu"
 
         if activation_fn == "gelu":
             act_fn = GELU(dim, inner_dim, bias=bias)
@@ -1147,13 +857,13 @@ class GEGLU(nn.Module):
         super().__init__()
         self.proj = nn.Linear(dim_in, dim_out * 2, bias=bias)
 
-    def gelu(self, gate: torch.Tensor) -> torch.Tensor:
-        if gate.device.type != "mps":
-            return F.gelu(gate)
+    # def gelu(self, gate: torch.Tensor) -> torch.Tensor:
+    #     if gate.device.type != "mps":
+    #         return F.gelu(gate)
 
-        pdb.set_trace()
-        # mps: gelu is not implemented for float16
-        return F.gelu(gate.to(dtype=torch.float32)).to(dtype=gate.dtype)
+    #     pdb.set_trace()
+    #     # mps: gelu is not implemented for float16
+    #     return F.gelu(gate.to(dtype=torch.float32)).to(dtype=gate.dtype)
 
     def forward(self, hidden_states, *args, **kwargs):
         if len(args) > 0 or kwargs.get("scale", None) is not None:
@@ -1168,18 +878,13 @@ class GEGLU(nn.Module):
         #     return hidden_states * self.gelu(gate)
 
         hidden_states, gate = hidden_states.chunk(2, dim=-1)
-        return hidden_states * self.gelu(gate)
+        return hidden_states * F.gelu(gate)
 
 class TemporalBasicTransformerBlock(nn.Module):
     r"""
     A basic Transformer block for video like data.
 
     Parameters:
-        dim (`int`): The number of channels in the input and output.
-        time_mix_inner_dim (`int`): The number of channels for temporal attention.
-        num_attention_heads (`int`): The number of heads to use for multi-head attention.
-        attention_head_dim (`int`): The number of channels in each head.
-        cross_attention_dim (`int`, *optional*): The size of the encoder_hidden_states vector for cross attention.
 
         inner_dim,
         inner_dim,
@@ -1233,14 +938,14 @@ class TemporalBasicTransformerBlock(nn.Module):
         self.ff = FeedForward(time_mix_inner_dim, activation_fn="geglu")
 
         # let chunk size default to None
-        self._chunk_size = None
-        self._chunk_dim = None
+        # self._chunk_size = None
+        # self._chunk_dim = None
 
-    def set_chunk_feed_forward(self, chunk_size: Optional[int], **kwargs):
-        # Sets chunk feed-forward
-        self._chunk_size = chunk_size
-        # chunk dim should be hardcoded to 1 to have better speed vs. memory trade-off
-        self._chunk_dim = 1
+    # def set_chunk_feed_forward(self, chunk_size: Optional[int], **kwargs):
+    #     # Sets chunk feed-forward
+    #     self._chunk_size = chunk_size
+    #     # chunk dim should be hardcoded to 1 to have better speed vs. memory trade-off
+    #     self._chunk_dim = 1
 
     def forward(
         self,
@@ -1262,11 +967,12 @@ class TemporalBasicTransformerBlock(nn.Module):
         residual = hidden_states
         hidden_states = self.norm_in(hidden_states)
 
-        if self._chunk_size is not None:
-            pdb.set_trace()
-            hidden_states = _chunked_feed_forward(self.ff_in, hidden_states, self._chunk_dim, self._chunk_size)
-        else:
-            hidden_states = self.ff_in(hidden_states)
+        # if self._chunk_size is not None:
+        #     pdb.set_trace()
+        #     hidden_states = _chunked_feed_forward(self.ff_in, hidden_states, self._chunk_dim, self._chunk_size)
+        # else:
+        #     hidden_states = self.ff_in(hidden_states)
+        hidden_states = self.ff_in(hidden_states)
 
         if self.is_res:
             hidden_states = hidden_states + residual
@@ -1284,12 +990,14 @@ class TemporalBasicTransformerBlock(nn.Module):
         # 4. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
 
-        if self._chunk_size is not None:
-            pdb.set_trace()
+        # if self._chunk_size is not None:
+        #     pdb.set_trace()
 
-            ff_output = _chunked_feed_forward(self.ff, norm_hidden_states, self._chunk_dim, self._chunk_size)
-        else:
-            ff_output = self.ff(norm_hidden_states)
+        #     ff_output = _chunked_feed_forward(self.ff, norm_hidden_states, self._chunk_dim, self._chunk_size)
+        # else:
+        #     ff_output = self.ff(norm_hidden_states)
+        ff_output = self.ff(norm_hidden_states)
+
 
         if self.is_res:
             hidden_states = ff_output + hidden_states
