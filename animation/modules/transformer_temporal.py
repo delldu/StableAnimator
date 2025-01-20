@@ -381,19 +381,18 @@ class Attention(nn.Module):
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
         self.rescale_output_factor = rescale_output_factor
         self.residual_connection = residual_connection
-        self.out_dim = out_dim if out_dim is not None else query_dim
+        self.out_dim = query_dim
 
         self.scale_qk = scale_qk
 
         assert self.scale_qk == True
         self.scale = dim_head**-0.5 # if self.scale_qk else 1.0
 
-        self.heads = out_dim // dim_head if out_dim is not None else heads
+        self.heads =  heads
 
         self.group_norm = None
         self.spatial_norm = None
-        # self.norm_q = None
-        # self.norm_k = None
+
 
         # cross_attention_dim == 1024 or None
         self.norm_cross = None
@@ -575,68 +574,35 @@ class Attention(nn.Module):
         Prepare the attention mask for the attention computation.
 
         """
-        head_size = self.heads
-
+        # head_size = self.heads
         assert attention_mask == None
-        if attention_mask is None:
-            return attention_mask
-
-        pdb.set_trace()
-
-        current_length: int = attention_mask.shape[-1]
-        if current_length != target_length:
-            if attention_mask.device.type == "mps":
-                # HACK: MPS: Does not support padding by greater than dimension of input tensor.
-                # Instead, we can manually construct the padding tensor.
-                padding_shape = (attention_mask.shape[0], attention_mask.shape[1], target_length)
-                padding = torch.zeros(padding_shape, dtype=attention_mask.dtype, device=attention_mask.device)
-                attention_mask = torch.cat([attention_mask, padding], dim=2)
-            else:
-                # TODO: for pipelines such as stable-diffusion, padding cross-attn mask:
-                #       we want to instead pad by (0, remaining_length), where remaining_length is:
-                #       remaining_length: int = target_length - current_length
-                # TODO: re-enable tests/models/test_models_unet_2d_condition.py#test_model_xattn_padding
-                attention_mask = F.pad(attention_mask, (0, target_length), value=0.0)
-
-        if out_dim == 3:
-            if attention_mask.shape[0] < batch_size * head_size:
-                attention_mask = attention_mask.repeat_interleave(head_size, dim=0)
-        elif out_dim == 4:
-            attention_mask = attention_mask.unsqueeze(1)
-            attention_mask = attention_mask.repeat_interleave(head_size, dim=1)
-
         return attention_mask
-
-    # def norm_encoder_hidden_states(self, encoder_hidden_states: torch.Tensor) -> torch.Tensor:
-    #     r"""
-    #     Normalize the encoder hidden states. Requires `self.norm_cross` to be specified when constructing the
-    #     `Attention` class.
-
-    #     Args:
-    #         encoder_hidden_states (`torch.Tensor`): Hidden states of the encoder.
-
-    #     Returns:
-    #         `torch.Tensor`: The normalized encoder hidden states.
-    #     """
-    #     assert self.norm_cross is not None, "self.norm_cross must be defined to call self.norm_encoder_hidden_states"
 
     #     pdb.set_trace()
 
-    #     if isinstance(self.norm_cross, nn.LayerNorm):
-    #         encoder_hidden_states = self.norm_cross(encoder_hidden_states)
-    #     elif isinstance(self.norm_cross, nn.GroupNorm):
-    #         # Group norm norms along the channels dimension and expects
-    #         # input to be in the shape of (N, C, *). In this case, we want
-    #         # to norm along the hidden dimension, so we need to move
-    #         # (batch_size, sequence_length, hidden_size) ->
-    #         # (batch_size, hidden_size, sequence_length)
-    #         encoder_hidden_states = encoder_hidden_states.transpose(1, 2)
-    #         encoder_hidden_states = self.norm_cross(encoder_hidden_states)
-    #         encoder_hidden_states = encoder_hidden_states.transpose(1, 2)
-    #     else:
-    #         assert False
+    #     current_length: int = attention_mask.shape[-1]
+    #     if current_length != target_length:
+    #         if attention_mask.device.type == "mps":
+    #             # HACK: MPS: Does not support padding by greater than dimension of input tensor.
+    #             # Instead, we can manually construct the padding tensor.
+    #             padding_shape = (attention_mask.shape[0], attention_mask.shape[1], target_length)
+    #             padding = torch.zeros(padding_shape, dtype=attention_mask.dtype, device=attention_mask.device)
+    #             attention_mask = torch.cat([attention_mask, padding], dim=2)
+    #         else:
+    #             # TODO: for pipelines such as stable-diffusion, padding cross-attn mask:
+    #             #       we want to instead pad by (0, remaining_length), where remaining_length is:
+    #             #       remaining_length: int = target_length - current_length
+    #             # TODO: re-enable tests/models/test_models_unet_2d_condition.py#test_model_xattn_padding
+    #             attention_mask = F.pad(attention_mask, (0, target_length), value=0.0)
 
-    #     return encoder_hidden_states
+    #     if out_dim == 3:
+    #         if attention_mask.shape[0] < batch_size * head_size:
+    #             attention_mask = attention_mask.repeat_interleave(head_size, dim=0)
+    #     elif out_dim == 4:
+    #         attention_mask = attention_mask.unsqueeze(1)
+    #         attention_mask = attention_mask.repeat_interleave(head_size, dim=1)
+
+    #     return attention_mask
 
 
 class AttnProcessor2_0:

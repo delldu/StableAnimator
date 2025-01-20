@@ -53,7 +53,7 @@ class AnimationAttnProcessor(nn.Module):
         # tensor [hidden_states] size: [16, 4096, 320], min: -0.878906, max: 1.689453, mean: 0.00032
         assert hidden_states is not None
         # assert encoder_hidden_states is not None
-        assert attention_mask == None
+        # assert attention_mask == None
         assert temb == None
 
         residual = hidden_states
@@ -64,8 +64,8 @@ class AnimationAttnProcessor(nn.Module):
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
 
-        attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-        assert attention_mask == None
+        # attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+        # assert attention_mask == None
 
         query = attn.to_q(hidden_states)
 
@@ -80,13 +80,13 @@ class AnimationAttnProcessor(nn.Module):
         key = attn.head_to_batch_dim(key).contiguous()
         value = attn.head_to_batch_dim(value).contiguous()
 
-        assert attention_mask == None
+        # assert attention_mask == None
         if is_xformers_available(): # True
             ### xformers
-            hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=attention_mask)
+            hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=None)
             hidden_states = hidden_states.to(query.dtype)
         else:
-            attention_probs = attn.get_attention_scores(query, key, attention_mask)
+            attention_probs = attn.get_attention_scores(query, key, None)
             hidden_states = torch.bmm(attention_probs, value)
         hidden_states = attn.batch_to_head_dim(hidden_states)
 
