@@ -88,48 +88,15 @@ class BasicTransformerBlock(nn.Module):
         dropout=0.0,
         cross_attention_dim  = 1024,
         activation_fn: str = "geglu",
-        # num_embeds_ada_norm: Optional[int] = None,
         attention_bias: bool = False,
-        # only_cross_attention: bool = False,
-        # double_self_attention: bool = False,
-        upcast_attention: bool = False,
-        norm_elementwise_affine: bool = True,
-        # norm_type: str = "layer_norm",  # 'layer_norm', 'ada_norm', 'ada_norm_zero', 'ada_norm_single', 'ada_norm_continuous', 'layer_norm_i2vgen'
-        norm_eps: float = 1e-5,
-        final_dropout: bool = False,
-        # attention_type: str = "default",
-        # positional_embeddings: Optional[str] = None,
-        # num_positional_embeddings: Optional[int] = None,
-        # ada_norm_continous_conditioning_embedding_dim: Optional[int] = None,
-        # ada_norm_bias: Optional[int] = None,
-        ff_inner_dim: Optional[int] = None,
-        ff_bias: bool = True,
-        attention_out_bias: bool = True,
     ):
         super().__init__()
-        # self.dim = dim
-        # self.num_attention_heads = num_attention_heads
-        # self.attention_head_dim = attention_head_dim
-        # self.dropout = dropout
         self.cross_attention_dim = cross_attention_dim
-        # self.activation_fn = activation_fn
-        # self.attention_bias = attention_bias
-        # self.double_self_attention = double_self_attention
-        # self.norm_elementwise_affine = norm_elementwise_affine
-        # self.positional_embeddings = positional_embeddings
-        # self.num_positional_embeddings = num_positional_embeddings
-        # self.only_cross_attention = only_cross_attention
-
-
-        # self.norm_type = norm_type
-        # self.num_embeds_ada_norm = num_embeds_ada_norm
-
-
         self.pos_embed = None
 
         # Define 3 blocks. Each block has its own normalization layer.
         # 1. Self-Attn
-        self.norm1 = nn.LayerNorm(dim, elementwise_affine=norm_elementwise_affine, eps=norm_eps)
+        self.norm1 = nn.LayerNorm(dim, elementwise_affine=True, eps=1e-5)
 
         self.attn1 = Attention(
             query_dim=dim,
@@ -138,12 +105,11 @@ class BasicTransformerBlock(nn.Module):
             dropout=dropout,
             bias=attention_bias,
             cross_attention_dim=None, #cross_attention_dim if only_cross_attention else None,
-            upcast_attention=upcast_attention,
-            out_bias=attention_out_bias,
+            out_bias=True,
         )
 
         # 2. Cross-Attn
-        self.norm2 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
+        self.norm2 = nn.LayerNorm(dim, 1e-5, elementwise_affine=True)
         self.attn2 = Attention(
             query_dim=dim,
             cross_attention_dim=cross_attention_dim, # if not double_self_attention else None,
@@ -151,47 +117,43 @@ class BasicTransformerBlock(nn.Module):
             dim_head=attention_head_dim,
             dropout=dropout,
             bias=attention_bias,
-            upcast_attention=upcast_attention,
-            out_bias=attention_out_bias,
+            out_bias=True,
         )  # is self-attn if encoder_hidden_states is none
 
         # 3. Feed-forward
-        self.norm3 = nn.LayerNorm(dim, norm_eps, norm_elementwise_affine)
+        self.norm3 = nn.LayerNorm(dim, 1e-5, elementwise_affine=True)
 
         self.ff = FeedForward(
             dim,
             dropout=dropout,
             activation_fn=activation_fn,
-            final_dropout=final_dropout,
-            inner_dim=ff_inner_dim,
-            bias=ff_bias,
+            final_dropout=False,
+            inner_dim=None,
+            bias=True,
         )
 
         # 4. Fuser
-
-        # let chunk size default to None
-        # self._chunk_size = None
-        # self._chunk_dim = 0
-
-    # def set_chunk_feed_forward(self, chunk_size: Optional[int], dim: int = 0):
-    #     # Sets chunk feed-forward
-    #     self._chunk_size = chunk_size
-    #     self._chunk_dim = dim
 
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
-        encoder_attention_mask: Optional[torch.Tensor] = None,
-        timestep: Optional[torch.LongTensor] = None,
-        cross_attention_kwargs: Dict[str, Any] = None,
-        class_labels: Optional[torch.LongTensor] = None,
-        added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
+        # encoder_attention_mask: Optional[torch.Tensor] = None,
+        # timestep: Optional[torch.LongTensor] = None,
+        # cross_attention_kwargs: Dict[str, Any] = None,
+        # class_labels: Optional[torch.LongTensor] = None,
+        # added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
     ) -> torch.Tensor:
-        if cross_attention_kwargs is not None:
-            if cross_attention_kwargs.get("scale", None) is not None:
-                logger.warning("Passing `scale` to `cross_attention_kwargs` is deprecated. `scale` will be ignored.")
+        # encoder_attention_mask = None
+        # timestep = None
+        # cross_attention_kwargs = None
+        # class_labels = None
+        # added_cond_kwargs = None
+
+        # if cross_attention_kwargs is not None:
+        #     if cross_attention_kwargs.get("scale", None) is not None:
+        #         logger.warning("Passing `scale` to `cross_attention_kwargs` is deprecated. `scale` will be ignored.")
 
         # Notice that normalization is always applied before the real computation in the following blocks.
         # 0. Self-Attention
@@ -199,14 +161,14 @@ class BasicTransformerBlock(nn.Module):
         norm_hidden_states = self.norm1(hidden_states)
 
         # 1. Prepare GLIGEN inputs
-        cross_attention_kwargs = cross_attention_kwargs.copy() if cross_attention_kwargs is not None else {}
-        gligen_kwargs = cross_attention_kwargs.pop("gligen", None)
+        # cross_attention_kwargs = cross_attention_kwargs.copy() if cross_attention_kwargs is not None else {}
+        # gligen_kwargs = cross_attention_kwargs.pop("gligen", None)
 
         attn_output = self.attn1(
             norm_hidden_states,
             encoder_hidden_states=None, #encoder_hidden_states if self.only_cross_attention else None,
             attention_mask=attention_mask,
-            **cross_attention_kwargs,
+            # **cross_attention_kwargs,
         )
 
         hidden_states = attn_output + hidden_states
@@ -214,48 +176,28 @@ class BasicTransformerBlock(nn.Module):
             hidden_states = hidden_states.squeeze(1)
 
         # 1.2 GLIGEN Control
-        if gligen_kwargs is not None:
-            hidden_states = self.fuser(hidden_states, gligen_kwargs["objs"])
+        # if gligen_kwargs is not None:
+        #     hidden_states = self.fuser(hidden_states, gligen_kwargs["objs"])
 
         # 3. Cross-Attention
         if self.attn2 is not None:
             # ==> pdb.set_trace()
-            # if self.norm_type == "ada_norm":
-            #     norm_hidden_states = self.norm2(hidden_states, timestep)
-            # elif self.norm_type in ["ada_norm_zero", "layer_norm", "layer_norm_i2vgen"]:
-            #     norm_hidden_states = self.norm2(hidden_states)
-            # elif self.norm_type == "ada_norm_single":
-            #     # For PixArt norm2 isn't applied here:
-            #     # https://github.com/PixArt-alpha/PixArt-alpha/blob/0f55e922376d8b797edd44d25d0e7464b260dcab/diffusion/model/nets/PixArtMS.py#L70C1-L76C103
-            #     norm_hidden_states = hidden_states
-            # elif self.norm_type == "ada_norm_continuous":
-            #     norm_hidden_states = self.norm2(hidden_states, added_cond_kwargs["pooled_text_emb"])
-            # else:
-            #     raise ValueError("Incorrect norm")
             norm_hidden_states = self.norm2(hidden_states)
-
-            # if self.pos_embed is not None and self.norm_type != "ada_norm_single":
-            #     norm_hidden_states = self.pos_embed(norm_hidden_states)
-
             attn_output = self.attn2(
                 norm_hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
-                attention_mask=encoder_attention_mask,
-                **cross_attention_kwargs,
+                attention_mask=None, # encoder_attention_mask,
+                # **cross_attention_kwargs,
             )
             hidden_states = attn_output + hidden_states
 
         # 4. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
-        # if self._chunk_size is not None:
-        #     # "feed_forward_chunk_size" can be used to save memory
-        #     ff_output = _chunked_feed_forward(self.ff, norm_hidden_states, self._chunk_dim, self._chunk_size)
-        # else:
-        #     ff_output = self.ff(norm_hidden_states)
         ff_output = self.ff(norm_hidden_states)
 
         hidden_states = ff_output + hidden_states
         if hidden_states.ndim == 4:
+            pdb.set_trace()
             hidden_states = hidden_states.squeeze(1)
 
         return hidden_states
@@ -421,15 +363,8 @@ class Attention(nn.Module):
         cross_attention_dim: Optional[int] = None, # 1024 or None
         heads: int = 8,
         dim_head: int = 64,
-        # kv_heads: Optional[int] = None,
         dropout: float = 0.0,
         bias: bool = False,
-        upcast_attention: bool = False,
-        # upcast_softmax: bool = False,
-        # cross_attention_norm: Optional[str] = None,
-        # cross_attention_norm_num_groups: int = 32,
-        # added_kv_proj_dim: Optional[int] = None,
-        added_proj_bias: Optional[bool] = True,
         out_bias: bool = True,
         scale_qk: bool = True,
         eps: float = 1e-5,
@@ -437,41 +372,28 @@ class Attention(nn.Module):
         residual_connection: bool = False,
         processor: Optional["AttnProcessor"] = None,
         out_dim: int = None,
-        # pre_only=False,
     ):
         super().__init__()
 
-        self.inner_dim = out_dim if out_dim is not None else dim_head * heads
+        self.inner_dim = dim_head * heads # out_dim if out_dim is not None else dim_head * heads
         self.inner_kv_dim = self.inner_dim # if kv_heads is None else dim_head * kv_heads
         self.query_dim = query_dim
-        # self.use_bias = bias
-        # self.is_cross_attention = cross_attention_dim is not None
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
-        self.upcast_attention = upcast_attention
-        # self.upcast_softmax = upcast_softmax
         self.rescale_output_factor = rescale_output_factor
         self.residual_connection = residual_connection
-        # self.dropout = dropout
-        # self.fused_projections = False
         self.out_dim = out_dim if out_dim is not None else query_dim
-        # self.pre_only = pre_only
 
         self.scale_qk = scale_qk
 
         assert self.scale_qk == True
-        self.scale = dim_head**-0.5 if self.scale_qk else 1.0
+        self.scale = dim_head**-0.5 # if self.scale_qk else 1.0
 
         self.heads = out_dim // dim_head if out_dim is not None else heads
-        # for slice_size > 0 the attention score computation
-        # is split across the batch axis to save memory
-        # You can set slice_size with `set_attention_slice`
-        # self.sliceable_head_dim = heads
-        # self.added_kv_proj_dim = added_kv_proj_dim
 
         self.group_norm = None
         self.spatial_norm = None
-        self.norm_q = None
-        self.norm_k = None
+        # self.norm_q = None
+        # self.norm_k = None
 
         # cross_attention_dim == 1024 or None
         self.norm_cross = None
@@ -479,14 +401,12 @@ class Attention(nn.Module):
         self.to_k = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
         self.to_v = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
 
-        self.added_proj_bias = added_proj_bias
         self.to_out = nn.ModuleList([])
         self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=out_bias))
         self.to_out.append(nn.Dropout(dropout))
 
-
-        self.norm_added_q = None
-        self.norm_added_k = None
+        # self.norm_added_q = None
+        # self.norm_added_k = None
 
         # set attention processor
         # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
@@ -504,10 +424,6 @@ class Attention(nn.Module):
     def set_processor(self, processor: "AttnProcessor") -> None:
         r"""
         Set the attention processor to use.
-
-        Args:
-            processor (`AttnProcessor`):
-                The attention processor to use.
         """
         # if current processor is in `self._modules` and if passed `processor` is not, we need to
         # pop `processor` from `self._modules`
@@ -577,6 +493,7 @@ class Attention(nn.Module):
         Returns:
             `torch.Tensor`: The reshaped tensor.
         """
+        # self.heads == 5
         head_size = self.heads
         batch_size, seq_len, dim = tensor.shape
         tensor = tensor.reshape(batch_size // head_size, head_size, seq_len, dim)
@@ -588,6 +505,9 @@ class Attention(nn.Module):
         Reshape the tensor from `[batch_size, seq_len, dim]` to `[batch_size, seq_len, heads, dim // heads]` `heads` is
         the number of heads initialized while constructing the `Attention` class.
         """
+        assert out_dim == 3
+        assert tensor.ndim == 3
+
         head_size = self.heads
         if tensor.ndim == 3:
             batch_size, seq_len, dim = tensor.shape
@@ -619,9 +539,6 @@ class Attention(nn.Module):
         pdb.set_trace()
 
         dtype = query.dtype
-        if self.upcast_attention:
-            query = query.float()
-            key = key.float()
 
         if attention_mask is None:
             baddbmm_input = torch.empty(
@@ -659,8 +576,12 @@ class Attention(nn.Module):
 
         """
         head_size = self.heads
+
+        assert attention_mask == None
         if attention_mask is None:
             return attention_mask
+
+        pdb.set_trace()
 
         current_length: int = attention_mask.shape[-1]
         if current_length != target_length:
@@ -686,34 +607,36 @@ class Attention(nn.Module):
 
         return attention_mask
 
-    def norm_encoder_hidden_states(self, encoder_hidden_states: torch.Tensor) -> torch.Tensor:
-        r"""
-        Normalize the encoder hidden states. Requires `self.norm_cross` to be specified when constructing the
-        `Attention` class.
+    # def norm_encoder_hidden_states(self, encoder_hidden_states: torch.Tensor) -> torch.Tensor:
+    #     r"""
+    #     Normalize the encoder hidden states. Requires `self.norm_cross` to be specified when constructing the
+    #     `Attention` class.
 
-        Args:
-            encoder_hidden_states (`torch.Tensor`): Hidden states of the encoder.
+    #     Args:
+    #         encoder_hidden_states (`torch.Tensor`): Hidden states of the encoder.
 
-        Returns:
-            `torch.Tensor`: The normalized encoder hidden states.
-        """
-        assert self.norm_cross is not None, "self.norm_cross must be defined to call self.norm_encoder_hidden_states"
+    #     Returns:
+    #         `torch.Tensor`: The normalized encoder hidden states.
+    #     """
+    #     assert self.norm_cross is not None, "self.norm_cross must be defined to call self.norm_encoder_hidden_states"
 
-        if isinstance(self.norm_cross, nn.LayerNorm):
-            encoder_hidden_states = self.norm_cross(encoder_hidden_states)
-        elif isinstance(self.norm_cross, nn.GroupNorm):
-            # Group norm norms along the channels dimension and expects
-            # input to be in the shape of (N, C, *). In this case, we want
-            # to norm along the hidden dimension, so we need to move
-            # (batch_size, sequence_length, hidden_size) ->
-            # (batch_size, hidden_size, sequence_length)
-            encoder_hidden_states = encoder_hidden_states.transpose(1, 2)
-            encoder_hidden_states = self.norm_cross(encoder_hidden_states)
-            encoder_hidden_states = encoder_hidden_states.transpose(1, 2)
-        else:
-            assert False
+    #     pdb.set_trace()
 
-        return encoder_hidden_states
+    #     if isinstance(self.norm_cross, nn.LayerNorm):
+    #         encoder_hidden_states = self.norm_cross(encoder_hidden_states)
+    #     elif isinstance(self.norm_cross, nn.GroupNorm):
+    #         # Group norm norms along the channels dimension and expects
+    #         # input to be in the shape of (N, C, *). In this case, we want
+    #         # to norm along the hidden dimension, so we need to move
+    #         # (batch_size, sequence_length, hidden_size) ->
+    #         # (batch_size, hidden_size, sequence_length)
+    #         encoder_hidden_states = encoder_hidden_states.transpose(1, 2)
+    #         encoder_hidden_states = self.norm_cross(encoder_hidden_states)
+    #         encoder_hidden_states = encoder_hidden_states.transpose(1, 2)
+    #     else:
+    #         assert False
+
+    #     return encoder_hidden_states
 
 
 class AttnProcessor2_0:
@@ -832,8 +755,6 @@ class FeedForward(nn.Module):
         # project out
         self.net.append(nn.Linear(inner_dim, dim_out, bias=bias))
         # FF as used in Vision Transformer, MLP-Mixer, etc. have a final dropout
-        if final_dropout:
-            self.net.append(nn.Dropout(dropout))
 
     def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         if len(args) > 0 or kwargs.get("scale", None) is not None:

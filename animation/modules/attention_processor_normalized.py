@@ -64,7 +64,7 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         # )
         assert hidden_states is not None
         assert encoder_hidden_states is not None
-        assert attention_mask == None
+        # assert attention_mask == None
         assert temb == None
         assert scale == 1.0
         
@@ -75,9 +75,9 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
 
-        assert attention_mask == None
-        attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-        assert attention_mask == None
+        # assert attention_mask == None
+        # attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+        # assert attention_mask == None
 
         query = attn.to_q(hidden_states)
 
@@ -102,13 +102,13 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         key = key.to(query.dtype)
         value = value.to(query.dtype)
 
-        assert attention_mask == None
+        # assert attention_mask == None
         if is_xformers_available(): # True
             ### xformers
-            hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=attention_mask)
+            hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=None)
             hidden_states = hidden_states.to(query.dtype)
         else:
-            hidden_states = F.scaled_dot_product_attention(query, key, value, attn_mask=attention_mask, dropout_p=0.0,
+            hidden_states = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0,
                                                            is_causal=False)
             hidden_states = hidden_states.to(query.dtype)
 
