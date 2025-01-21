@@ -440,15 +440,14 @@ class Attention(nn.Module):
         """
         # if current processor is in `self._modules` and if passed `processor` is not, we need to
         # pop `processor` from `self._modules`
-        pdb.set_trace()
-
-        if (
-            hasattr(self, "processor")
-            and isinstance(self.processor, torch.nn.Module)
-            and not isinstance(processor, torch.nn.Module)
-        ):
-            logger.info(f"You are removing possibly trained weights of {self.processor} with {processor}")
-            self._modules.pop("processor")
+        # assert processor == None
+        # if (
+        #     hasattr(self, "processor")
+        #     and isinstance(self.processor, torch.nn.Module)
+        #     and not isinstance(processor, torch.nn.Module)
+        # ):
+        #     logger.info(f"You are removing possibly trained weights of {self.processor} with {processor}")
+        #     self._modules.pop("processor")
 
         self.processor = processor
 
@@ -456,9 +455,8 @@ class Attention(nn.Module):
         r"""
         Get the attention processor in use.
         """
-        pdb.set_trace()
-
-        if not return_deprecated_lora:
+        assert return_deprecated_lora == True
+        if not return_deprecated_lora: # False
             return self.processor
 
     def forward(
@@ -479,25 +477,33 @@ class Attention(nn.Module):
         # The `Attention` class can call different attention processors / attention functions
         # here we simply pass along all tensors to the selected processor class
         # For standard processors that are defined here, `**cross_attention_kwargs` is empty
+        #
+        # encoder_hidden_states = None
+        # attention_mask = None
+        # cross_attention_kwargs = {}
 
-        attn_parameters = set(inspect.signature(self.processor.__call__).parameters.keys())
-        quiet_attn_parameters = {"ip_adapter_masks"}
-        unused_kwargs = [
-            k for k, _ in cross_attention_kwargs.items() if k not in attn_parameters and k not in quiet_attn_parameters
-        ]
-        if len(unused_kwargs) > 0:
-            logger.warning(
-                f"cross_attention_kwargs {unused_kwargs} are not expected by {self.processor.__class__.__name__} and will be ignored."
-            )
-        cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
-        pdb.set_trace()
+        # attn_parameters = set(inspect.signature(self.processor.__call__).parameters.keys())
+        # # (Pdb) attn_parameters
+        # # {'hidden_states', 'attn', 'attention_mask', 'encoder_hidden_states', 'temb'}
+
+        # quiet_attn_parameters = {"ip_adapter_masks"}
+        # unused_kwargs = [
+        #     k for k, _ in cross_attention_kwargs.items() if k not in attn_parameters and k not in quiet_attn_parameters
+        # ]
+        # # unused_kwargs -- []
+        # if len(unused_kwargs) > 0:
+        #     logger.warning(
+        #         f"cross_attention_kwargs {unused_kwargs} are not expected by {self.processor.__class__.__name__} and will be ignored."
+        #     )
+        # cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
+        # # cross_attention_kwargs -- {}
 
         return self.processor(
             self,
             hidden_states,
             encoder_hidden_states=encoder_hidden_states,
             attention_mask=attention_mask,
-            **cross_attention_kwargs,
+            # **cross_attention_kwargs,
         )
 
     def batch_to_head_dim(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -704,13 +710,24 @@ class FeedForward(nn.Module):
         # project out
         self.net.append(nn.Linear(inner_dim, dim_out, bias=bias))
         # FF as used in Vision Transformer, MLP-Mixer, etc. have a final dropout
+        # (Pdb) self
+        # FeedForward(
+        #   (net): ModuleList(
+        #     (0): GEGLU(
+        #       (proj): Linear(in_features=320, out_features=2560, bias=True)
+        #     )
+        #     (1): Dropout(p=0.0, inplace=False)
+        #     (2): Linear(in_features=1280, out_features=320, bias=True)
+        #   )
+        # )
+
 
     def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
-        pdb.set_trace()
-        
-        if len(args) > 0 or kwargs.get("scale", None) is not None:
-            deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
-            deprecate("scale", "1.0.0", deprecation_message)
+        # args = ()
+        # kwargs = {}
+        # if len(args) > 0 or kwargs.get("scale", None) is not None: # False
+        #     deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
+        #     deprecate("scale", "1.0.0", deprecation_message)
         for module in self.net:
             hidden_states = module(hidden_states)
         return hidden_states
