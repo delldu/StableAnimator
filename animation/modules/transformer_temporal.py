@@ -24,6 +24,7 @@ from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
 from animation.modules.attention_processor import AnimationAttnProcessor
+# from animation.modules.unet import TimestepEmbedding, Timesteps
 
 import pdb
 import todos
@@ -31,13 +32,8 @@ import todos
 class AlphaBlender(nn.Module):
     r"""
     A module to blend spatial and temporal features.
-
     """
-
-    def __init__(
-        self,
-        alpha: float,
-    ):
+    def __init__(self, alpha: float):
         super().__init__()
         self.register_parameter("mix_factor", torch.nn.Parameter(torch.Tensor([alpha])))
 
@@ -50,17 +46,19 @@ class AlphaBlender(nn.Module):
 
         # (batch, channel, frames, height, width)
         alpha = alpha.reshape(-1)[:, None, None]
+
+        # tensor [torch.sigmoid(self.mix_factor)[..., None]] size: [1, 1], min: 0.593262, max: 0.593262, mean: 0.593262
+        # tensor [alpha] size: [16, 1, 1], min: 0.593262, max: 0.593262, mean: 0.593262
         return alpha
 
-    def forward(
-        self,
+    def forward(self,
         x_spatial: torch.Tensor,
         x_temporal: torch.Tensor,
         image_only_indicator: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    ):
         # tensor [x_spatial] size: [16, 4096, 320], min: -2.132812, max: 1.702148, mean: -0.039416
         # tensor [x_temporal] size: [16, 4096, 320], min: -4.917969, max: 5.1875, mean: -0.088254
-
+        # tensor [AlphaBlender image_only_indicator] size: [1, 16], min: 0.0, max: 0.0, mean: 0.0
 
         alpha = self.get_alpha(image_only_indicator, x_spatial.ndim)
         alpha = alpha.to(x_spatial.dtype)
@@ -79,153 +77,95 @@ class BasicTransformerBlock(nn.Module):
         cross_attention_dim=cross_attention_dim,
 
     """
-
-    def __init__(
-        self,
+    def __init__(self,
         dim: int,
         num_attention_heads: int,
         attention_head_dim: int,
         dropout=0.0,
         cross_attention_dim  = 1024,
-        activation_fn: str = "geglu",
-        attention_bias: bool = False,
     ):
         super().__init__()
-        self.cross_attention_dim = cross_attention_dim
-        self.pos_embed = None
-
         # Define 3 blocks. Each block has its own normalization layer.
         # 1. Self-Attn
         self.norm1 = nn.LayerNorm(dim, elementwise_affine=True, eps=1e-5)
-
         self.attn1 = Attention(
             query_dim=dim,
             heads=num_attention_heads,
             dim_head=attention_head_dim,
             dropout=dropout,
-            bias=attention_bias,
-            cross_attention_dim=None, #cross_attention_dim if only_cross_attention else None,
-            out_bias=True,
+            bias=False,
+            cross_attention_dim=None,
         )
 
         # 2. Cross-Attn
         self.norm2 = nn.LayerNorm(dim, 1e-5, elementwise_affine=True)
         self.attn2 = Attention(
             query_dim=dim,
-            cross_attention_dim=cross_attention_dim, # if not double_self_attention else None,
+            cross_attention_dim=cross_attention_dim, 
             heads=num_attention_heads,
             dim_head=attention_head_dim,
             dropout=dropout,
-            bias=attention_bias,
-            out_bias=True,
+            bias=False,
         )  # is self-attn if encoder_hidden_states is none
 
         # 3. Feed-forward
         self.norm3 = nn.LayerNorm(dim, 1e-5, elementwise_affine=True)
+        self.ff = FeedForward(dim)
 
-        self.ff = FeedForward(
-            dim,
-            dropout=dropout,
-            activation_fn=activation_fn,
-            final_dropout=False,
-            inner_dim=None,
-            bias=True,
-        )
 
-        # 4. Fuser
-
-    def forward(
-        self,
+    def forward(self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         encoder_hidden_states: Optional[torch.Tensor] = None,
-        # encoder_attention_mask: Optional[torch.Tensor] = None,
-        # timestep: Optional[torch.LongTensor] = None,
-        # cross_attention_kwargs: Dict[str, Any] = None,
-        # class_labels: Optional[torch.LongTensor] = None,
-        # added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
     ) -> torch.Tensor:
         # encoder_attention_mask = None
         # timestep = None
-        # cross_attention_kwargs = None
-        # class_labels = None
-        # added_cond_kwargs = None
-
-        # if cross_attention_kwargs is not None:
-        #     if cross_attention_kwargs.get("scale", None) is not None:
-        #         logger.warning("Passing `scale` to `cross_attention_kwargs` is deprecated. `scale` will be ignored.")
 
         # Notice that normalization is always applied before the real computation in the following blocks.
-        # 0. Self-Attention
+        # 1. Self-Attention
         batch_size = hidden_states.shape[0]
         norm_hidden_states = self.norm1(hidden_states)
-
-        # 1. Prepare GLIGEN inputs
-        # cross_attention_kwargs = cross_attention_kwargs.copy() if cross_attention_kwargs is not None else {}
-        # gligen_kwargs = cross_attention_kwargs.pop("gligen", None)
 
         attn_output = self.attn1(
             norm_hidden_states,
             encoder_hidden_states=None, #encoder_hidden_states if self.only_cross_attention else None,
             attention_mask=attention_mask,
-            # **cross_attention_kwargs,
         )
 
         hidden_states = attn_output + hidden_states
-        if hidden_states.ndim == 4:
-            hidden_states = hidden_states.squeeze(1)
 
-        # 1.2 GLIGEN Control
-        # if gligen_kwargs is not None:
-        #     hidden_states = self.fuser(hidden_states, gligen_kwargs["objs"])
+        # 2. Cross-Attention
+        norm_hidden_states = self.norm2(hidden_states)
+        attn_output = self.attn2(
+            norm_hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            attention_mask=None,
+        )
+        hidden_states = attn_output + hidden_states
 
-        # 3. Cross-Attention
-        if self.attn2 is not None:
-            # ==> pdb.set_trace()
-            norm_hidden_states = self.norm2(hidden_states)
-            attn_output = self.attn2(
-                norm_hidden_states,
-                encoder_hidden_states=encoder_hidden_states,
-                attention_mask=None, # encoder_attention_mask,
-                # **cross_attention_kwargs,
-            )
-            hidden_states = attn_output + hidden_states
-        else:
-            pdb.set_trace()
-
-        # 4. Feed-forward
+        # 3. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
         ff_output = self.ff(norm_hidden_states)
 
         hidden_states = ff_output + hidden_states
-        # if hidden_states.ndim == 4:
-        #     pdb.set_trace()
-        #     hidden_states = hidden_states.squeeze(1)
 
         return hidden_states
 
 
 class TransformerSpatioTemporalModel(nn.Module):
-    """
-    A Transformer model for video-like data.
-    """
-
-    def __init__(
-        self,
+    """ A Transformer model for video-like data. """
+    def __init__(self,
         num_attention_heads: int = 5,
         attention_head_dim: int = 64,
         in_channels: int = 320,
-        out_channels: Optional[int] = None,
         num_layers: int = 1,
         cross_attention_dim: Optional[int] = 1024,
         num_tokens=4,
     ):
         super().__init__()
-        # print("cross_attention_dim1: ", cross_attention_dim)
 
         inner_dim = num_attention_heads * attention_head_dim
         self.inner_dim = inner_dim
-        # assert self.inner_dim == 320
 
         # 2. Define input layers
         self.norm = nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=1e-6)
@@ -257,8 +197,7 @@ class TransformerSpatioTemporalModel(nn.Module):
             ]
         )
 
-        time_embed_dim = in_channels * 4
-        self.time_pos_embed = TimestepEmbedding(in_channels, time_embed_dim, out_dim=in_channels)
+        self.time_pos_embed = TimestepEmbedding(in_channels, in_channels * 4, out_dim=in_channels)
         # (Pdb) self.time_pos_embed
         # TimestepEmbedding(
         #   (linear_1): Linear(in_features=320, out_features=1280, bias=True)
@@ -275,17 +214,15 @@ class TransformerSpatioTemporalModel(nn.Module):
         self.gradient_checkpointing = False
         self.num_tokens = num_tokens
 
-    def forward(
-        self,
+    def forward(self,
         hidden_states: torch.Tensor,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         image_only_indicator: Optional[torch.Tensor] = None,
-        return_dict: bool = True,
+        return_dict: bool = False,
     ):
         # tensor [hidden_states] size: [16, 320, 64, 64], min: -17.109375, max: 39.46875, mean: 0.010112
         # tensor [encoder_hidden_states] size: [16, 5, 1024], min: -14.492188, max: 14.453125, mean: 0.000888
         # tensor [image_only_indicator] size: [1, 16], min: 0.0, max: 0.0, mean: 0.0
-        # [return_dict] value: 'False'
 
         assert return_dict == False
 
@@ -375,20 +312,18 @@ class Attention(nn.Module):
         cross_attention_dim=None,
 
     """
-
-    def __init__(
-        self,
+    def __init__(self,
         query_dim: int,
         cross_attention_dim: Optional[int] = None, # 1024 or None
         heads: int = 8,
         dim_head: int = 64,
         dropout: float = 0.0,
         bias: bool = False,
-        out_bias: bool = True,
         scale_qk: bool = True,
         processor: Optional["AttnProcessor"] = None,
     ):
         super().__init__()
+        # assert processor == None
 
         self.inner_dim = dim_head * heads
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
@@ -408,45 +343,19 @@ class Attention(nn.Module):
 
         # cross_attention_dim == 1024 or None
         self.norm_cross = None
-        self.to_q = nn.Linear(query_dim, self.inner_dim, bias=bias)
-        self.to_k = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=bias)
-        self.to_v = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=bias)
+        self.to_q = nn.Linear(query_dim, self.inner_dim, bias=False)
+        self.to_k = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=False)
+        self.to_v = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=False)
 
         self.to_out = nn.ModuleList([])
-        self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=out_bias))
+        self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=True))
         self.to_out.append(nn.Dropout(dropout))
 
-        # self.norm_added_q = None
-        # self.norm_added_k = None
-
         # set attention processor
-        # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
-        # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
-        # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
-        if processor is None:
-            # ==> pdb.set_trace()
-            assert hasattr(F, "scaled_dot_product_attention") and self.scale_qk
-            # processor = (
-            #     AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
-            # )
         self.set_processor(processor)
 
 
     def set_processor(self, processor: "AttnProcessor") -> None:
-        r"""
-        Set the attention processor to use.
-        """
-        # if current processor is in `self._modules` and if passed `processor` is not, we need to
-        # pop `processor` from `self._modules`
-        # assert processor == None
-        # if (
-        #     hasattr(self, "processor")
-        #     and isinstance(self.processor, torch.nn.Module)
-        #     and not isinstance(processor, torch.nn.Module)
-        # ):
-        #     logger.info(f"You are removing possibly trained weights of {self.processor} with {processor}")
-        #     self._modules.pop("processor")
-
         self.processor = processor
 
     def get_processor(self, return_deprecated_lora: bool = False) -> "AttentionProcessor":
@@ -457,63 +366,28 @@ class Attention(nn.Module):
         if not return_deprecated_lora: # False
             return self.processor
 
-    def forward(
-        self,
+    def forward(self,
         hidden_states: torch.Tensor,
         encoder_hidden_states: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        **cross_attention_kwargs,
+        # **cross_attention_kwargs,
     ) -> torch.Tensor:
-        r"""
-        The forward method of the `Attention` class.
-
-
-
-        Returns:
-            `torch.Tensor`: The output of the attention layer.
-        """
-        # The `Attention` class can call different attention processors / attention functions
-        # here we simply pass along all tensors to the selected processor class
-        # For standard processors that are defined here, `**cross_attention_kwargs` is empty
         #
         # encoder_hidden_states = None
         # attention_mask = None
         # cross_attention_kwargs = {}
-
-        # attn_parameters = set(inspect.signature(self.processor.__call__).parameters.keys())
-        # # (Pdb) attn_parameters
-        # # {'hidden_states', 'attn', 'attention_mask', 'encoder_hidden_states', 'temb'}
-
-        # quiet_attn_parameters = {"ip_adapter_masks"}
-        # unused_kwargs = [
-        #     k for k, _ in cross_attention_kwargs.items() if k not in attn_parameters and k not in quiet_attn_parameters
-        # ]
-        # # unused_kwargs -- []
-        # if len(unused_kwargs) > 0:
-        #     logger.warning(
-        #         f"cross_attention_kwargs {unused_kwargs} are not expected by {self.processor.__class__.__name__} and will be ignored."
-        #     )
-        # cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
-        # # cross_attention_kwargs -- {}
 
         return self.processor(
             self,
             hidden_states,
             encoder_hidden_states=encoder_hidden_states,
             attention_mask=attention_mask,
-            # **cross_attention_kwargs,
         )
 
     def batch_to_head_dim(self, tensor: torch.Tensor) -> torch.Tensor:
         r"""
         Reshape the tensor from `[batch_size, seq_len, dim]` to `[batch_size // heads, seq_len, dim * heads]`. `heads`
         is the number of heads initialized while constructing the `Attention` class.
-
-        Args:
-            tensor (`torch.Tensor`): The tensor to reshape.
-
-        Returns:
-            `torch.Tensor`: The reshaped tensor.
         """
         # self.heads == 5
         head_size = self.heads
@@ -547,17 +421,6 @@ class Attention(nn.Module):
     def get_attention_scores(
         self, query: torch.Tensor, key: torch.Tensor, attention_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        r"""
-        Compute the attention scores.
-
-        Args:
-            query (`torch.Tensor`): The query tensor.
-            key (`torch.Tensor`): The key tensor.
-            attention_mask (`torch.Tensor`, *optional*): The attention mask to use. If `None`, no mask is applied.
-
-        Returns:
-            `torch.Tensor`: The attention probabilities/scores.
-        """
         pdb.set_trace()
 
         dtype = query.dtype
@@ -602,111 +465,22 @@ class Attention(nn.Module):
         return attention_mask
 
 
-class AttnProcessor2_0:
-    r"""
-    Processor for implementing scaled dot-product attention (enabled by default if you're using PyTorch 2.0).
-    """
-
-    def __init__(self):
-        if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
-
-    def __call__(
-        self,
-        attn: Attention,
-        hidden_states: torch.Tensor,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        temb: Optional[torch.Tensor] = None,
-        *args,
-        **kwargs,
-    ) -> torch.Tensor:
-        pdb.set_trace()
-
-        if len(args) > 0 or kwargs.get("scale", None) is not None:
-            deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
-            deprecate("scale", "1.0.0", deprecation_message)
-
-        residual = hidden_states
-        if attn.spatial_norm is not None:
-            hidden_states = attn.spatial_norm(hidden_states, temb)
-
-        input_ndim = hidden_states.ndim
-
-        if input_ndim == 4:
-            batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
-
-        batch_size, sequence_length, _ = (
-            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
-        )
-
-        query = attn.to_q(hidden_states)
-
-        if encoder_hidden_states is None:
-            encoder_hidden_states = hidden_states
-
-        key = attn.to_k(encoder_hidden_states)
-        value = attn.to_v(encoder_hidden_states)
-
-        inner_dim = key.shape[-1]
-        head_dim = inner_dim // attn.heads
-
-        query = query.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
-
-        key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
-        value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
-
-        hidden_states = F.scaled_dot_product_attention(
-            query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
-        )
-
-        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
-        hidden_states = hidden_states.to(query.dtype)
-
-        # linear proj
-        hidden_states = attn.to_out[0](hidden_states)
-        # dropout
-        hidden_states = attn.to_out[1](hidden_states)
-
-        if input_ndim == 4:
-            pdb.set_trace()
-            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
-
-        assert attn.residual_connection == False
-        return hidden_states
-
 class FeedForward(nn.Module):
-    r"""
-    A feed-forward layer.
-    """
-
-    def __init__(
-        self,
+    def __init__(self,
         dim: int,
         dim_out: Optional[int] = None,
         mult: int = 4,
         dropout: float = 0.0,
-        activation_fn: str = "geglu",
-        final_dropout: bool = False,
-        inner_dim=None,
-        bias: bool = True,
     ):
         super().__init__()
-        if inner_dim is None:
-            inner_dim = int(dim * mult)
+        inner_dim = int(dim * mult)
         dim_out = dim_out if dim_out is not None else dim
 
-        assert activation_fn == "geglu"
-        act_fn = GEGLU(dim, inner_dim, bias=bias)
-
-
+        act_fn = GEGLU(dim, inner_dim, bias=True)
         self.net = nn.ModuleList([])
-        # project in
         self.net.append(act_fn)
-        # project dropout
         self.net.append(nn.Dropout(dropout))
-        # project out
-        self.net.append(nn.Linear(inner_dim, dim_out, bias=bias))
+        self.net.append(nn.Linear(inner_dim, dim_out, bias=True))
         # FF as used in Vision Transformer, MLP-Mixer, etc. have a final dropout
         # (Pdb) self
         # FeedForward(
@@ -723,9 +497,6 @@ class FeedForward(nn.Module):
     def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         # args = ()
         # kwargs = {}
-        # if len(args) > 0 or kwargs.get("scale", None) is not None: # False
-        #     deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
-        #     deprecate("scale", "1.0.0", deprecation_message)
         for module in self.net:
             hidden_states = module(hidden_states)
         return hidden_states
@@ -734,7 +505,6 @@ class GEGLU(nn.Module):
     r"""
     A [variant](https://arxiv.org/abs/2002.05202) of the gated linear unit activation function.
     """
-
     def __init__(self, dim_in: int, dim_out: int, bias: bool = True):
         super().__init__()
         self.proj = nn.Linear(dim_in, dim_out * 2, bias=bias)
@@ -742,9 +512,6 @@ class GEGLU(nn.Module):
     def forward(self, hidden_states, *args, **kwargs):
         # args = ()
         # kwargs = {}
-        # if len(args) > 0 or kwargs.get("scale", None) is not None: # False
-        #     deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
-        #     deprecate("scale", "1.0.0", deprecation_message)
         hidden_states = self.proj(hidden_states)
         hidden_states, gate = hidden_states.chunk(2, dim=-1)
         return hidden_states * F.gelu(gate)
@@ -761,7 +528,6 @@ class TemporalBasicTransformerBlock(nn.Module):
         attention_head_dim,
         cross_attention_dim=cross_attention_dim,
     """
-
     def __init__(
         self,
         dim: int,
@@ -772,18 +538,13 @@ class TemporalBasicTransformerBlock(nn.Module):
     ):
         super().__init__()
         assert cross_attention_dim is not None
-
         self.is_res = dim == time_mix_inner_dim
 
         self.norm_in = nn.LayerNorm(dim)
 
         # Define 3 blocks. Each block has its own normalization layer.
         # 1. Self-Attn
-        self.ff_in = FeedForward(
-            dim,
-            dim_out=time_mix_inner_dim,
-            activation_fn="geglu",
-        )
+        self.ff_in = FeedForward(dim, dim_out=time_mix_inner_dim)
 
         self.norm1 = nn.LayerNorm(time_mix_inner_dim)
         self.attn1 = Attention(
@@ -804,10 +565,9 @@ class TemporalBasicTransformerBlock(nn.Module):
 
         # 3. Feed-forward
         self.norm3 = nn.LayerNorm(time_mix_inner_dim)
-        self.ff = FeedForward(time_mix_inner_dim, activation_fn="geglu")
+        self.ff = FeedForward(time_mix_inner_dim)
 
-    def forward(
-        self,
+    def forward(self,
         hidden_states: torch.Tensor,
         num_frames: int,
         encoder_hidden_states: Optional[torch.Tensor] = None,
@@ -835,12 +595,9 @@ class TemporalBasicTransformerBlock(nn.Module):
         hidden_states = attn_output + hidden_states
 
         # 3. Cross-Attention
-        if self.attn2 is not None:
-            norm_hidden_states = self.norm2(hidden_states)
-            attn_output = self.attn2(norm_hidden_states, encoder_hidden_states=encoder_hidden_states)
-            hidden_states = attn_output + hidden_states
-        else:
-            pdb.set_trace()
+        norm_hidden_states = self.norm2(hidden_states)
+        attn_output = self.attn2(norm_hidden_states, encoder_hidden_states=encoder_hidden_states)
+        hidden_states = attn_output + hidden_states
 
         # 4. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
