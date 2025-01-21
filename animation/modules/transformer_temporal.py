@@ -190,15 +190,17 @@ class BasicTransformerBlock(nn.Module):
                 # **cross_attention_kwargs,
             )
             hidden_states = attn_output + hidden_states
+        else:
+            pdb.set_trace()
 
         # 4. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
         ff_output = self.ff(norm_hidden_states)
 
         hidden_states = ff_output + hidden_states
-        if hidden_states.ndim == 4:
-            pdb.set_trace()
-            hidden_states = hidden_states.squeeze(1)
+        # if hidden_states.ndim == 4:
+        #     pdb.set_trace()
+        #     hidden_states = hidden_states.squeeze(1)
 
         return hidden_states
 
@@ -280,28 +282,42 @@ class TransformerSpatioTemporalModel(nn.Module):
         image_only_indicator: Optional[torch.Tensor] = None,
         return_dict: bool = True,
     ):
+        todos.debug.output_var("hidden_states", hidden_states)
+        todos.debug.output_var("encoder_hidden_states", encoder_hidden_states)
+        todos.debug.output_var("image_only_indicator", image_only_indicator)
+        todos.debug.output_var("return_dict", return_dict)
+        print("-" * 80)
+
         # 1. Input
         batch_frames, _, height, width = hidden_states.shape
         num_frames = image_only_indicator.shape[-1]
         batch_size = batch_frames // num_frames
 
-
         end_pos = encoder_hidden_states.shape[1] - self.num_tokens
         time_context = encoder_hidden_states[:, :end_pos, :]
+        todos.debug.output_var("time_context1", time_context)
 
         time_context_first_timestep = time_context[None, :].reshape(
             batch_size, num_frames, -1, time_context.shape[-1]
         )[:, 0]
+        todos.debug.output_var("time_context_first_timestep", time_context_first_timestep)
+
         time_context = time_context_first_timestep[:, None].broadcast_to(
             batch_size, height * width, time_context.shape[-2], time_context.shape[-1]
         )
+        todos.debug.output_var("time_context2", time_context)
         time_context = time_context.reshape(batch_size * height * width, -1, time_context.shape[-1])
+        todos.debug.output_var("time_context3", time_context)
+
 
         residual = hidden_states
-
         hidden_states = self.norm(hidden_states)
         inner_dim = hidden_states.shape[1]
+        todos.debug.output_var("hidden_states1", hidden_states)
+
         hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(batch_frames, height * width, inner_dim)
+        todos.debug.output_var("hidden_states2", hidden_states)
+
         hidden_states = self.proj_in(hidden_states)
 
         num_frames_emb = torch.arange(num_frames, device=hidden_states.device)
@@ -340,9 +356,14 @@ class TransformerSpatioTemporalModel(nn.Module):
 
         # 3. Output
         hidden_states = self.proj_out(hidden_states)
+        todos.debug.output_var("hidden_states3", hidden_states)
         hidden_states = hidden_states.reshape(batch_frames, height, width, inner_dim).permute(0, 3, 1, 2).contiguous()
+        todos.debug.output_var("hidden_states4", hidden_states)
+
 
         output = hidden_states + residual
+        todos.debug.output_var("output", output)
+        print("#" * 80)
 
         return (output,)
 
@@ -367,17 +388,11 @@ class Attention(nn.Module):
         bias: bool = False,
         out_bias: bool = True,
         scale_qk: bool = True,
-        # eps: float = 1e-5,
-        # rescale_output_factor: float = 1.0,
-        # residual_connection: bool = False,
         processor: Optional["AttnProcessor"] = None,
-        # out_dim: int = None,
     ):
         super().__init__()
 
-        self.inner_dim = dim_head * heads # out_dim if out_dim is not None else dim_head * heads
-        # self.inner_kv_dim = self.inner_dim # if kv_heads is None else dim_head * kv_heads
-        # self.query_dim = query_dim
+        self.inner_dim = dim_head * heads
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
         self.rescale_output_factor = 1.0
         self.residual_connection = False
@@ -386,7 +401,7 @@ class Attention(nn.Module):
         self.scale_qk = scale_qk
 
         assert self.scale_qk == True
-        self.scale = dim_head**-0.5 # if self.scale_qk else 1.0
+        self.scale = dim_head**-0.5
 
         self.heads =  heads
 
@@ -413,9 +428,9 @@ class Attention(nn.Module):
         if processor is None:
             # ==> pdb.set_trace()
             assert hasattr(F, "scaled_dot_product_attention") and self.scale_qk
-            processor = (
-                AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
-            )
+            # processor = (
+            #     AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
+            # )
         self.set_processor(processor)
 
 
@@ -425,6 +440,8 @@ class Attention(nn.Module):
         """
         # if current processor is in `self._modules` and if passed `processor` is not, we need to
         # pop `processor` from `self._modules`
+        pdb.set_trace()
+
         if (
             hasattr(self, "processor")
             and isinstance(self.processor, torch.nn.Module)
@@ -439,6 +456,8 @@ class Attention(nn.Module):
         r"""
         Get the attention processor in use.
         """
+        pdb.set_trace()
+
         if not return_deprecated_lora:
             return self.processor
 
@@ -471,6 +490,7 @@ class Attention(nn.Module):
                 f"cross_attention_kwargs {unused_kwargs} are not expected by {self.processor.__class__.__name__} and will be ignored."
             )
         cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
+        pdb.set_trace()
 
         return self.processor(
             self,
@@ -673,16 +693,6 @@ class FeedForward(nn.Module):
         dim_out = dim_out if dim_out is not None else dim
 
         assert activation_fn == "geglu"
-        # if activation_fn == "gelu":
-        #     act_fn = GELU(dim, inner_dim, bias=bias)
-        # if activation_fn == "gelu-approximate":
-        #     act_fn = GELU(dim, inner_dim, approximate="tanh", bias=bias)
-        # elif activation_fn == "geglu":
-        #     act_fn = GEGLU(dim, inner_dim, bias=bias)
-        # elif activation_fn == "geglu-approximate":
-        #     act_fn = ApproximateGELU(dim, inner_dim, bias=bias)
-        # elif activation_fn == "swiglu":
-        #     act_fn = SwiGLU(dim, inner_dim, bias=bias)
         act_fn = GEGLU(dim, inner_dim, bias=bias)
 
 
@@ -696,6 +706,8 @@ class FeedForward(nn.Module):
         # FF as used in Vision Transformer, MLP-Mixer, etc. have a final dropout
 
     def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+        pdb.set_trace()
+        
         if len(args) > 0 or kwargs.get("scale", None) is not None:
             deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
             deprecate("scale", "1.0.0", deprecation_message)
@@ -812,6 +824,8 @@ class TemporalBasicTransformerBlock(nn.Module):
             norm_hidden_states = self.norm2(hidden_states)
             attn_output = self.attn2(norm_hidden_states, encoder_hidden_states=encoder_hidden_states)
             hidden_states = attn_output + hidden_states
+        else:
+            pdb.set_trace()
 
         # 4. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
