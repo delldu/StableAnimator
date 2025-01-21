@@ -6,8 +6,10 @@ from PIL import Image
 from diffusers.models.attention_processor import XFormersAttnProcessor
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
 import torch
-from diffusers import AutoencoderKLTemporalDecoder, EulerDiscreteScheduler
+# from diffusers import AutoencoderKLTemporalDecoder, EulerDiscreteScheduler
+from diffusers import EulerDiscreteScheduler
 
+from animation.modules.vae import AutoencoderKLTemporalDecoder
 from animation.modules.attention_processor import AnimationAttnProcessor
 from animation.modules.attention_processor_normalized import AnimationIDAttnNormalizedProcessor
 from animation.modules.face_model import FaceModel
@@ -224,23 +226,45 @@ if __name__ == "__main__":
     generator = torch.Generator(device='cuda').manual_seed(seed)
 
     feature_extractor = CLIPImageProcessor.from_pretrained(args.pretrained_model_name_or_path, subfolder="feature_extractor", revision=args.revision)
+    # do_resize = True
+    # size = {'shortest_edge': 224}
+    # resample = 3
+    # do_center_crop = True
+    # crop_size = {'height': 224, 'width': 224}
+    # do_rescale = True
+    # rescale_factor = 0.00392156862745098
+    # do_normalize = True
+    # image_mean = [0.48145466, 0.4578275, 0.40821073]
+    # image_std = [0.26862954, 0.26130258, 0.27577711]
+    # do_convert_rgb = True
+    # kwargs = {'feature_extractor_type': 'CLIPFeatureExtractor', 'image_processor_type': 'CLIPImageProcessor'}
+
     noise_scheduler = EulerDiscreteScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
     image_encoder = CLIPVisionModelWithProjection.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="image_encoder", revision=args.revision
     )
     # image_encoder.forward.__code__ ---
     # <file "miniconda3/envs/python39/lib/python3.9/site-packages/transformers/models/clip/modeling_clip.py", line 1500>
+    # model name: CLIPVisionModelWithProjection
+    # model file: checkpoints/SVD/stable-video-diffusion-img2vid-xt/image_encoder/model.safetensors
 
     # args.pretrained_model_name_or_path === 'checkpoints/SVD/stable-video-diffusion-img2vid-xt'
     vae = AutoencoderKLTemporalDecoder.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision) # args.revision -- None
+    # vae.forward.__code__ --
+    #     <file "miniconda3/envs/python39/lib/python3.9/site-packages/diffusers/models/
+    #     autoencoders/autoencoder_kl_temporal_decoder.py", line 373>
+    # model name:  AutoencoderKLTemporalDecoder
+    # model file:  checkpoints/SVD/stable-video-diffusion-img2vid-xt/vae/diffusion_pytorch_model.safetensors
 
     unet = UNetSpatioTemporalConditionModel.from_pretrained(
         args.pretrained_model_name_or_path,
         subfolder="unet",
         low_cpu_mem_usage=True,
     )
-    # unet -- UNetSpatioTemporalConditionModel
+    # model name:  UNetSpatioTemporalConditionModel
+    # model file:  checkpoints/SVD/stable-video-diffusion-img2vid-xt/unet/diffusion_pytorch_model.safetensors
+
 
     pose_net = PoseNet(noise_latent_channels=unet.config.block_out_channels[0]) # 320 -- unet.config.block_out_channels[0]
 

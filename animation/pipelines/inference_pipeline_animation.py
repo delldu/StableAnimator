@@ -6,12 +6,9 @@ import PIL.Image
 # import einops
 import numpy as np
 import torch
-from diffusers.image_processor import VaeImageProcessor #, PipelineImageInput
+from diffusers.image_processor import VaeImageProcessor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import retrieve_timesteps
-# from diffusers.pipelines.stable_video_diffusion.pipeline_stable_video_diffusion \
-#     import _resize_with_antialiasing #, _append_dims
-# from diffusers.utils.torch_utils import is_compiled_module, randn_tensor
 from diffusers.utils.torch_utils import randn_tensor
 
 
@@ -168,8 +165,7 @@ def tensor2vid(video: torch.Tensor, processor: "VaeImageProcessor", output_type:
     return outputs
 
 class InferenceAnimationPipeline(DiffusionPipeline):
-    def __init__(
-            self,
+    def __init__(self,
             vae,
             image_encoder,
             unet,
@@ -193,8 +189,7 @@ class InferenceAnimationPipeline(DiffusionPipeline):
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
         self.num_tokens = 4
 
-    def _encode_image(
-            self,
+    def _encode_image(self,
             image,
             device: Union[str, torch.device],
             num_videos_per_prompt: int,
@@ -248,8 +243,7 @@ class InferenceAnimationPipeline(DiffusionPipeline):
         # tensor [image_embeddings] size: [2, 1, 1024], min: -5.863281, max: 6.507812, mean: 0.002143
         return image_embeddings
 
-    def _encode_vae_image(
-            self,
+    def _encode_vae_image(self,
             image: torch.Tensor,
             device: Union[str, torch.device],
             num_videos_per_prompt: int,
@@ -277,8 +271,7 @@ class InferenceAnimationPipeline(DiffusionPipeline):
 
         return image_latents
 
-    def _get_add_time_ids(
-            self,
+    def _get_add_time_ids(self,
             fps: int,
             motion_bucket_id: int,
             noise_aug_strength: float,
@@ -323,8 +316,7 @@ class InferenceAnimationPipeline(DiffusionPipeline):
         # tensor [add_time_ids] size: [2, 3], min: 0.020004, max: 127.0, mean: 44.340008
         return add_time_ids
 
-    def decode_latents(
-            self,
+    def decode_latents(self,
             latents: torch.Tensor,
             num_frames: int,
             decode_chunk_size: int = 8):
@@ -378,8 +370,7 @@ class InferenceAnimationPipeline(DiffusionPipeline):
         if height % 8 != 0 or width % 8 != 0:
             raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
 
-    def prepare_latents(
-            self,
+    def prepare_latents(self,
             batch_size: int,
             num_frames: int,
             num_channels_latents: int,
