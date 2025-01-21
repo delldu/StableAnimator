@@ -367,20 +367,20 @@ class Attention(nn.Module):
         bias: bool = False,
         out_bias: bool = True,
         scale_qk: bool = True,
-        eps: float = 1e-5,
-        rescale_output_factor: float = 1.0,
-        residual_connection: bool = False,
+        # eps: float = 1e-5,
+        # rescale_output_factor: float = 1.0,
+        # residual_connection: bool = False,
         processor: Optional["AttnProcessor"] = None,
-        out_dim: int = None,
+        # out_dim: int = None,
     ):
         super().__init__()
 
         self.inner_dim = dim_head * heads # out_dim if out_dim is not None else dim_head * heads
-        self.inner_kv_dim = self.inner_dim # if kv_heads is None else dim_head * kv_heads
-        self.query_dim = query_dim
+        # self.inner_kv_dim = self.inner_dim # if kv_heads is None else dim_head * kv_heads
+        # self.query_dim = query_dim
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
-        self.rescale_output_factor = rescale_output_factor
-        self.residual_connection = residual_connection
+        self.rescale_output_factor = 1.0
+        self.residual_connection = False
         self.out_dim = query_dim
 
         self.scale_qk = scale_qk
@@ -393,12 +393,11 @@ class Attention(nn.Module):
         self.group_norm = None
         self.spatial_norm = None
 
-
         # cross_attention_dim == 1024 or None
         self.norm_cross = None
         self.to_q = nn.Linear(query_dim, self.inner_dim, bias=bias)
-        self.to_k = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
-        self.to_v = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
+        self.to_k = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=bias)
+        self.to_v = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=bias)
 
         self.to_out = nn.ModuleList([])
         self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=out_bias))
@@ -578,32 +577,6 @@ class Attention(nn.Module):
         assert attention_mask == None
         return attention_mask
 
-    #     pdb.set_trace()
-
-    #     current_length: int = attention_mask.shape[-1]
-    #     if current_length != target_length:
-    #         if attention_mask.device.type == "mps":
-    #             # HACK: MPS: Does not support padding by greater than dimension of input tensor.
-    #             # Instead, we can manually construct the padding tensor.
-    #             padding_shape = (attention_mask.shape[0], attention_mask.shape[1], target_length)
-    #             padding = torch.zeros(padding_shape, dtype=attention_mask.dtype, device=attention_mask.device)
-    #             attention_mask = torch.cat([attention_mask, padding], dim=2)
-    #         else:
-    #             # TODO: for pipelines such as stable-diffusion, padding cross-attn mask:
-    #             #       we want to instead pad by (0, remaining_length), where remaining_length is:
-    #             #       remaining_length: int = target_length - current_length
-    #             # TODO: re-enable tests/models/test_models_unet_2d_condition.py#test_model_xattn_padding
-    #             attention_mask = F.pad(attention_mask, (0, target_length), value=0.0)
-
-    #     if out_dim == 3:
-    #         if attention_mask.shape[0] < batch_size * head_size:
-    #             attention_mask = attention_mask.repeat_interleave(head_size, dim=0)
-    #     elif out_dim == 4:
-    #         attention_mask = attention_mask.unsqueeze(1)
-    #         attention_mask = attention_mask.repeat_interleave(head_size, dim=1)
-
-    #     return attention_mask
-
 
 class AttnProcessor2_0:
     r"""
@@ -619,7 +592,6 @@ class AttnProcessor2_0:
         attn: Attention,
         hidden_states: torch.Tensor,
         encoder_hidden_states: Optional[torch.Tensor] = None,
-        # attention_mask: Optional[torch.Tensor] = None,
         temb: Optional[torch.Tensor] = None,
         *args,
         **kwargs,
@@ -701,17 +673,18 @@ class FeedForward(nn.Module):
         dim_out = dim_out if dim_out is not None else dim
 
         assert activation_fn == "geglu"
+        # if activation_fn == "gelu":
+        #     act_fn = GELU(dim, inner_dim, bias=bias)
+        # if activation_fn == "gelu-approximate":
+        #     act_fn = GELU(dim, inner_dim, approximate="tanh", bias=bias)
+        # elif activation_fn == "geglu":
+        #     act_fn = GEGLU(dim, inner_dim, bias=bias)
+        # elif activation_fn == "geglu-approximate":
+        #     act_fn = ApproximateGELU(dim, inner_dim, bias=bias)
+        # elif activation_fn == "swiglu":
+        #     act_fn = SwiGLU(dim, inner_dim, bias=bias)
+        act_fn = GEGLU(dim, inner_dim, bias=bias)
 
-        if activation_fn == "gelu":
-            act_fn = GELU(dim, inner_dim, bias=bias)
-        if activation_fn == "gelu-approximate":
-            act_fn = GELU(dim, inner_dim, approximate="tanh", bias=bias)
-        elif activation_fn == "geglu":
-            act_fn = GEGLU(dim, inner_dim, bias=bias)
-        elif activation_fn == "geglu-approximate":
-            act_fn = ApproximateGELU(dim, inner_dim, bias=bias)
-        elif activation_fn == "swiglu":
-            act_fn = SwiGLU(dim, inner_dim, bias=bias)
 
         self.net = nn.ModuleList([])
         # project in
@@ -733,37 +706,19 @@ class FeedForward(nn.Module):
 class GEGLU(nn.Module):
     r"""
     A [variant](https://arxiv.org/abs/2002.05202) of the gated linear unit activation function.
-
-    Parameters:
-        dim_in (`int`): The number of channels in the input.
-        dim_out (`int`): The number of channels in the output.
-        bias (`bool`, defaults to True): Whether to use a bias in the linear layer.
     """
 
     def __init__(self, dim_in: int, dim_out: int, bias: bool = True):
         super().__init__()
         self.proj = nn.Linear(dim_in, dim_out * 2, bias=bias)
 
-    # def gelu(self, gate: torch.Tensor) -> torch.Tensor:
-    #     if gate.device.type != "mps":
-    #         return F.gelu(gate)
-
-    #     pdb.set_trace()
-    #     # mps: gelu is not implemented for float16
-    #     return F.gelu(gate.to(dtype=torch.float32)).to(dtype=gate.dtype)
-
     def forward(self, hidden_states, *args, **kwargs):
-        if len(args) > 0 or kwargs.get("scale", None) is not None:
-            deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
-            deprecate("scale", "1.0.0", deprecation_message)
+        # args = ()
+        # kwargs = {}
+        # if len(args) > 0 or kwargs.get("scale", None) is not None: # False
+        #     deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
+        #     deprecate("scale", "1.0.0", deprecation_message)
         hidden_states = self.proj(hidden_states)
-        # if is_torch_npu_available():
-        #     # using torch_npu.npu_geglu can run faster and save memory on NPU.
-        #     return torch_npu.npu_geglu(hidden_states, dim=-1, approximate=1)[0]
-        # else:
-        #     hidden_states, gate = hidden_states.chunk(2, dim=-1)
-        #     return hidden_states * self.gelu(gate)
-
         hidden_states, gate = hidden_states.chunk(2, dim=-1)
         return hidden_states * F.gelu(gate)
 
@@ -824,16 +779,6 @@ class TemporalBasicTransformerBlock(nn.Module):
         self.norm3 = nn.LayerNorm(time_mix_inner_dim)
         self.ff = FeedForward(time_mix_inner_dim, activation_fn="geglu")
 
-        # let chunk size default to None
-        # self._chunk_size = None
-        # self._chunk_dim = None
-
-    # def set_chunk_feed_forward(self, chunk_size: Optional[int], **kwargs):
-    #     # Sets chunk feed-forward
-    #     self._chunk_size = chunk_size
-    #     # chunk dim should be hardcoded to 1 to have better speed vs. memory trade-off
-    #     self._chunk_dim = 1
-
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -853,12 +798,6 @@ class TemporalBasicTransformerBlock(nn.Module):
 
         residual = hidden_states
         hidden_states = self.norm_in(hidden_states)
-
-        # if self._chunk_size is not None:
-        #     pdb.set_trace()
-        #     hidden_states = _chunked_feed_forward(self.ff_in, hidden_states, self._chunk_dim, self._chunk_size)
-        # else:
-        #     hidden_states = self.ff_in(hidden_states)
         hidden_states = self.ff_in(hidden_states)
 
         if self.is_res:
@@ -876,15 +815,7 @@ class TemporalBasicTransformerBlock(nn.Module):
 
         # 4. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
-
-        # if self._chunk_size is not None:
-        #     pdb.set_trace()
-
-        #     ff_output = _chunked_feed_forward(self.ff, norm_hidden_states, self._chunk_dim, self._chunk_size)
-        # else:
-        #     ff_output = self.ff(norm_hidden_states)
         ff_output = self.ff(norm_hidden_states)
-
 
         if self.is_res:
             hidden_states = ff_output + hidden_states
