@@ -282,41 +282,41 @@ class TransformerSpatioTemporalModel(nn.Module):
         image_only_indicator: Optional[torch.Tensor] = None,
         return_dict: bool = True,
     ):
-        todos.debug.output_var("hidden_states", hidden_states)
-        todos.debug.output_var("encoder_hidden_states", encoder_hidden_states)
-        todos.debug.output_var("image_only_indicator", image_only_indicator)
-        todos.debug.output_var("return_dict", return_dict)
-        print("-" * 80)
+        # tensor [hidden_states] size: [16, 320, 64, 64], min: -17.109375, max: 39.46875, mean: 0.010112
+        # tensor [encoder_hidden_states] size: [16, 5, 1024], min: -14.492188, max: 14.453125, mean: 0.000888
+        # tensor [image_only_indicator] size: [1, 16], min: 0.0, max: 0.0, mean: 0.0
+        # [return_dict] value: 'False'
+
+        assert return_dict == False
 
         # 1. Input
-        batch_frames, _, height, width = hidden_states.shape
-        num_frames = image_only_indicator.shape[-1]
-        batch_size = batch_frames // num_frames
+        batch_frames, _, height, width = hidden_states.shape # size: [16, 320, 64, 64]
+        num_frames = image_only_indicator.shape[-1] # size: [1, 16]
+        batch_size = batch_frames // num_frames # ==> 1
 
-        end_pos = encoder_hidden_states.shape[1] - self.num_tokens
+        end_pos = encoder_hidden_states.shape[1] - self.num_tokens # ==> 1
         time_context = encoder_hidden_states[:, :end_pos, :]
-        todos.debug.output_var("time_context1", time_context)
+        # tensor [time_context1] size: [16, 1, 1024], min: -5.863281, max: 6.507812, mean: 0.004285
 
         time_context_first_timestep = time_context[None, :].reshape(
             batch_size, num_frames, -1, time_context.shape[-1]
         )[:, 0]
-        todos.debug.output_var("time_context_first_timestep", time_context_first_timestep)
+        # tensor [time_context_first_timestep] size: [1, 1, 1024], min: -5.863281, max: 6.507812, mean: 0.004285
 
         time_context = time_context_first_timestep[:, None].broadcast_to(
             batch_size, height * width, time_context.shape[-2], time_context.shape[-1]
         )
-        todos.debug.output_var("time_context2", time_context)
+        # tensor [time_context] size: [1, 4096, 1, 1024], min: -5.863281, max: 6.507812, mean: 0.004285
         time_context = time_context.reshape(batch_size * height * width, -1, time_context.shape[-1])
-        todos.debug.output_var("time_context3", time_context)
-
+        # tensor [time_context] size: [4096, 1, 1024], min: -5.863281, max: 6.507812, mean: 0.004285
 
         residual = hidden_states
         hidden_states = self.norm(hidden_states)
         inner_dim = hidden_states.shape[1]
-        todos.debug.output_var("hidden_states1", hidden_states)
 
+        # tensor [hidden_states1] size: [16, 320, 64, 64], min: -2.525391, max: 2.4375, mean: -0.013387
         hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(batch_frames, height * width, inner_dim)
-        todos.debug.output_var("hidden_states2", hidden_states)
+        # tensor [hidden_states2] size: [16, 4096, 320], min: -2.525391, max: 2.4375, mean: -0.013387
 
         hidden_states = self.proj_in(hidden_states)
 
@@ -356,14 +356,12 @@ class TransformerSpatioTemporalModel(nn.Module):
 
         # 3. Output
         hidden_states = self.proj_out(hidden_states)
-        todos.debug.output_var("hidden_states3", hidden_states)
+        # tensor [hidden_states3] size: [16, 4096, 320], min: -28.609375, max: 41.75, mean: -1.081215
         hidden_states = hidden_states.reshape(batch_frames, height, width, inner_dim).permute(0, 3, 1, 2).contiguous()
-        todos.debug.output_var("hidden_states4", hidden_states)
-
+        # tensor [hidden_states4] size: [16, 320, 64, 64], min: -28.609375, max: 41.75, mean: -1.081215
 
         output = hidden_states + residual
-        todos.debug.output_var("output", output)
-        print("#" * 80)
+        # tensor [output] size: [16, 320, 64, 64], min: -35.4375, max: 79.375, mean: -1.071102
 
         return (output,)
 
