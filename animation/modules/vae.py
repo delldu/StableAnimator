@@ -118,8 +118,8 @@ class Attention(nn.Module):
 
         self.inner_dim = out_dim if out_dim is not None else dim_head * heads
         self.inner_kv_dim = self.inner_dim if kv_heads is None else dim_head * kv_heads
-        self.query_dim = query_dim
-        self.use_bias = bias
+        # self.query_dim = query_dim
+        # self.use_bias = bias
         self.is_cross_attention = cross_attention_dim is not None
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
         self.upcast_attention = upcast_attention
@@ -139,70 +139,74 @@ class Attention(nn.Module):
         # for slice_size > 0 the attention score computation
         # is split across the batch axis to save memory
         # You can set slice_size with `set_attention_slice`
-        self.sliceable_head_dim = heads
+        # self.sliceable_head_dim = heads
 
         self.added_kv_proj_dim = added_kv_proj_dim
         self.only_cross_attention = only_cross_attention
 
-        if self.added_kv_proj_dim is None and self.only_cross_attention:
-            raise ValueError(
-                "`only_cross_attention` can only be set to True if `added_kv_proj_dim` is not None. Make sure to set either `only_cross_attention=False` or define `added_kv_proj_dim`."
-            )
+        # if self.added_kv_proj_dim is None and self.only_cross_attention:
+        #     raise ValueError(
+        #         "`only_cross_attention` can only be set to True if `added_kv_proj_dim` is not None. Make sure to set either `only_cross_attention=False` or define `added_kv_proj_dim`."
+        #     )
 
         if norm_num_groups is not None: # True | False
             self.group_norm = nn.GroupNorm(num_channels=query_dim, num_groups=norm_num_groups, eps=eps, affine=True)
         else:
             self.group_norm = None
 
-        assert spatial_norm_dim == None
-        if spatial_norm_dim is not None:
-            self.spatial_norm = SpatialNorm(f_channels=query_dim, zq_channels=spatial_norm_dim)
-        else:
-            self.spatial_norm = None
+        # assert spatial_norm_dim == None
+        # if spatial_norm_dim is not None:
+        #     self.spatial_norm = SpatialNorm(f_channels=query_dim, zq_channels=spatial_norm_dim)
+        # else:
+        #     self.spatial_norm = None
+        self.spatial_norm = None # !!!
 
-        assert qk_norm == None
-        if qk_norm is None:
-            self.norm_q = None
-            self.norm_k = None
-        elif qk_norm == "layer_norm":
-            self.norm_q = nn.LayerNorm(dim_head, eps=eps)
-            self.norm_k = nn.LayerNorm(dim_head, eps=eps)
-        elif qk_norm == "fp32_layer_norm":
-            self.norm_q = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
-            self.norm_k = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
-        elif qk_norm == "layer_norm_across_heads":
-            # Lumina applys qk norm across all heads
-            self.norm_q = nn.LayerNorm(dim_head * heads, eps=eps)
-            self.norm_k = nn.LayerNorm(dim_head * kv_heads, eps=eps)
-        elif qk_norm == "rms_norm":
-            self.norm_q = RMSNorm(dim_head, eps=eps)
-            self.norm_k = RMSNorm(dim_head, eps=eps)
-        else:
-            raise ValueError(f"unknown qk_norm: {qk_norm}. Should be None or 'layer_norm'")
+        # assert qk_norm == None
+        # if qk_norm is None:
+        #     self.norm_q = None
+        #     self.norm_k = None
+        # elif qk_norm == "layer_norm":
+        #     self.norm_q = nn.LayerNorm(dim_head, eps=eps)
+        #     self.norm_k = nn.LayerNorm(dim_head, eps=eps)
+        # elif qk_norm == "fp32_layer_norm":
+        #     self.norm_q = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
+        #     self.norm_k = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
+        # elif qk_norm == "layer_norm_across_heads":
+        #     # Lumina applys qk norm across all heads
+        #     self.norm_q = nn.LayerNorm(dim_head * heads, eps=eps)
+        #     self.norm_k = nn.LayerNorm(dim_head * kv_heads, eps=eps)
+        # elif qk_norm == "rms_norm":
+        #     self.norm_q = RMSNorm(dim_head, eps=eps)
+        #     self.norm_k = RMSNorm(dim_head, eps=eps)
+        # else:
+        #     raise ValueError(f"unknown qk_norm: {qk_norm}. Should be None or 'layer_norm'")
+        self.norm_q = None
+        self.norm_k = None
+        # assert cross_attention_norm == None
+        # if cross_attention_norm is None:
+        #     self.norm_cross = None
+        # elif cross_attention_norm == "layer_norm":
+        #     self.norm_cross = nn.LayerNorm(self.cross_attention_dim)
+        # elif cross_attention_norm == "group_norm":
+        #     if self.added_kv_proj_dim is not None:
+        #         # The given `encoder_hidden_states` are initially of shape
+        #         # (batch_size, seq_len, added_kv_proj_dim) before being projected
+        #         # to (batch_size, seq_len, cross_attention_dim). The norm is applied
+        #         # before the projection, so we need to use `added_kv_proj_dim` as
+        #         # the number of channels for the group norm.
+        #         norm_cross_num_channels = added_kv_proj_dim
+        #     else:
+        #         norm_cross_num_channels = self.cross_attention_dim
 
-        assert cross_attention_norm == None
-        if cross_attention_norm is None:
-            self.norm_cross = None
-        elif cross_attention_norm == "layer_norm":
-            self.norm_cross = nn.LayerNorm(self.cross_attention_dim)
-        elif cross_attention_norm == "group_norm":
-            if self.added_kv_proj_dim is not None:
-                # The given `encoder_hidden_states` are initially of shape
-                # (batch_size, seq_len, added_kv_proj_dim) before being projected
-                # to (batch_size, seq_len, cross_attention_dim). The norm is applied
-                # before the projection, so we need to use `added_kv_proj_dim` as
-                # the number of channels for the group norm.
-                norm_cross_num_channels = added_kv_proj_dim
-            else:
-                norm_cross_num_channels = self.cross_attention_dim
+        #     self.norm_cross = nn.GroupNorm(
+        #         num_channels=norm_cross_num_channels, num_groups=cross_attention_norm_num_groups, eps=1e-5, affine=True
+        #     )
+        # else:
+        #     raise ValueError(
+        #         f"unknown cross_attention_norm: {cross_attention_norm}. Should be None, 'layer_norm' or 'group_norm'"
+        #     )
+        self.norm_cross = None
 
-            self.norm_cross = nn.GroupNorm(
-                num_channels=norm_cross_num_channels, num_groups=cross_attention_norm_num_groups, eps=1e-5, affine=True
-            )
-        else:
-            raise ValueError(
-                f"unknown cross_attention_norm: {cross_attention_norm}. Should be None, 'layer_norm' or 'group_norm'"
-            )
 
         self.to_q = nn.Linear(query_dim, self.inner_dim, bias=bias)
 
@@ -215,12 +219,12 @@ class Attention(nn.Module):
             self.to_v = None
 
         self.added_proj_bias = added_proj_bias
-        if self.added_kv_proj_dim is not None:
-            pdb.set_trace()
-            self.add_k_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
-            self.add_v_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
-            if self.context_pre_only is not None:
-                self.add_q_proj = nn.Linear(added_kv_proj_dim, self.inner_dim, bias=added_proj_bias)
+        # if self.added_kv_proj_dim is not None:
+        #     pdb.set_trace()
+        #     self.add_k_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
+        #     self.add_v_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
+        #     if self.context_pre_only is not None:
+        #         self.add_q_proj = nn.Linear(added_kv_proj_dim, self.inner_dim, bias=added_proj_bias)
 
         if not self.pre_only: # True ?
             self.to_out = nn.ModuleList([])
@@ -229,215 +233,210 @@ class Attention(nn.Module):
         else:
             pdb.set_trace()
 
-        if self.context_pre_only is not None and not self.context_pre_only:
-            pdb.set_trace()
-            self.to_add_out = nn.Linear(self.inner_dim, self.out_dim, bias=out_bias)
+        # if self.context_pre_only is not None and not self.context_pre_only:
+        #     pdb.set_trace()
+        #     self.to_add_out = nn.Linear(self.inner_dim, self.out_dim, bias=out_bias)
 
-        if qk_norm is not None and added_kv_proj_dim is not None:
-            pdb.set_trace()
-            if qk_norm == "fp32_layer_norm":
-                self.norm_added_q = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
-                self.norm_added_k = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
-            elif qk_norm == "rms_norm":
-                self.norm_added_q = RMSNorm(dim_head, eps=eps)
-                self.norm_added_k = RMSNorm(dim_head, eps=eps)
-        else:
-            self.norm_added_q = None
-            self.norm_added_k = None
+        # if qk_norm is not None and added_kv_proj_dim is not None:
+        #     pdb.set_trace()
+        #     if qk_norm == "fp32_layer_norm":
+        #         self.norm_added_q = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
+        #         self.norm_added_k = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
+        #     elif qk_norm == "rms_norm":
+        #         self.norm_added_q = RMSNorm(dim_head, eps=eps)
+        #         self.norm_added_k = RMSNorm(dim_head, eps=eps)
+        # else:
+        #     self.norm_added_q = None
+        #     self.norm_added_k = None
 
         # set attention processor
         # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
         # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
         # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
         if processor is None:
-            assert hasattr(F, "scaled_dot_product_attention") and self.scale_qk
-
-            processor = (
-                AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
-            )
-            pass
+            processor = AttnProcessor2_0()
         self.set_processor(processor)
 
-    def set_use_npu_flash_attention(self, use_npu_flash_attention: bool) -> None:
-        r"""
-        Set whether to use npu flash attention from `torch_npu` or not.
+    # def set_use_npu_flash_attention(self, use_npu_flash_attention: bool) -> None:
+    #     r"""
+    #     Set whether to use npu flash attention from `torch_npu` or not.
 
-        """
-        if use_npu_flash_attention:
-            processor = AttnProcessorNPU()
-        else:
-            # set attention processor
-            # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
-            # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
-            # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
-            processor = (
-                AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
-            )
-        pdb.set_trace()
-        self.set_processor(processor)
+    #     """
+    #     if use_npu_flash_attention:
+    #         processor = AttnProcessorNPU()
+    #     else:
+    #         # set attention processor
+    #         # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
+    #         # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
+    #         # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
+    #         processor = (
+    #             AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
+    #         )
+    #     pdb.set_trace()
+    #     self.set_processor(processor)
 
-    def set_use_memory_efficient_attention_xformers(
-        self, use_memory_efficient_attention_xformers: bool, attention_op: Optional[Callable] = None
-    ) -> None:
-        r"""
-        Set whether to use memory efficient attention from `xformers` or not.
+    # def set_use_memory_efficient_attention_xformers(
+    #     self, use_memory_efficient_attention_xformers: bool, attention_op: Optional[Callable] = None
+    # ) -> None:
+    #     r"""
+    #     Set whether to use memory efficient attention from `xformers` or not.
 
-        Args:
-            use_memory_efficient_attention_xformers (`bool`):
-                Whether to use memory efficient attention from `xformers` or not.
-            attention_op (`Callable`, *optional*):
-                The attention operation to use. Defaults to `None` which uses the default attention operation from
-                `xformers`.
-        """
-        pdb.set_trace()
+    #     Args:
+    #         use_memory_efficient_attention_xformers (`bool`):
+    #             Whether to use memory efficient attention from `xformers` or not.
+    #         attention_op (`Callable`, *optional*):
+    #             The attention operation to use. Defaults to `None` which uses the default attention operation from
+    #             `xformers`.
+    #     """
+    #     pdb.set_trace()
 
-        is_custom_diffusion = hasattr(self, "processor") and isinstance(
-            self.processor,
-            (CustomDiffusionAttnProcessor, CustomDiffusionXFormersAttnProcessor, CustomDiffusionAttnProcessor2_0),
-        )
-        is_added_kv_processor = hasattr(self, "processor") and isinstance(
-            self.processor,
-            (
-                AttnAddedKVProcessor,
-                AttnAddedKVProcessor2_0,
-                SlicedAttnAddedKVProcessor,
-                XFormersAttnAddedKVProcessor,
-            ),
-        )
+    #     is_custom_diffusion = hasattr(self, "processor") and isinstance(
+    #         self.processor,
+    #         (CustomDiffusionAttnProcessor, CustomDiffusionXFormersAttnProcessor, CustomDiffusionAttnProcessor2_0),
+    #     )
+    #     is_added_kv_processor = hasattr(self, "processor") and isinstance(
+    #         self.processor,
+    #         (
+    #             AttnAddedKVProcessor,
+    #             AttnAddedKVProcessor2_0,
+    #             SlicedAttnAddedKVProcessor,
+    #             XFormersAttnAddedKVProcessor,
+    #         ),
+    #     )
 
-        if use_memory_efficient_attention_xformers:
-            pdb.set_trace()
+    #     if use_memory_efficient_attention_xformers:
+    #         pdb.set_trace()
 
-            if is_added_kv_processor and is_custom_diffusion:
-                raise NotImplementedError(
-                    f"Memory efficient attention is currently not supported for custom diffusion for attention processor type {self.processor}"
-                )
-            if not is_xformers_available():
-                raise ModuleNotFoundError(
-                    (
-                        "Refer to https://github.com/facebookresearch/xformers for more information on how to install"
-                        " xformers"
-                    ),
-                    name="xformers",
-                )
-            elif not torch.cuda.is_available():
-                raise ValueError(
-                    "torch.cuda.is_available() should be True but is False. xformers' memory efficient attention is"
-                    " only available for GPU "
-                )
-            else:
-                try:
-                    # Make sure we can run the memory efficient attention
-                    _ = xformers.ops.memory_efficient_attention(
-                        torch.randn((1, 2, 40), device="cuda"),
-                        torch.randn((1, 2, 40), device="cuda"),
-                        torch.randn((1, 2, 40), device="cuda"),
-                    )
-                except Exception as e:
-                    raise e
+    #         if is_added_kv_processor and is_custom_diffusion:
+    #             raise NotImplementedError(
+    #                 f"Memory efficient attention is currently not supported for custom diffusion for attention processor type {self.processor}"
+    #             )
+    #         if not is_xformers_available():
+    #             raise ModuleNotFoundError(
+    #                 (
+    #                     "Refer to https://github.com/facebookresearch/xformers for more information on how to install"
+    #                     " xformers"
+    #                 ),
+    #                 name="xformers",
+    #             )
+    #         elif not torch.cuda.is_available():
+    #             raise ValueError(
+    #                 "torch.cuda.is_available() should be True but is False. xformers' memory efficient attention is"
+    #                 " only available for GPU "
+    #             )
+    #         else:
+    #             try:
+    #                 # Make sure we can run the memory efficient attention
+    #                 _ = xformers.ops.memory_efficient_attention(
+    #                     torch.randn((1, 2, 40), device="cuda"),
+    #                     torch.randn((1, 2, 40), device="cuda"),
+    #                     torch.randn((1, 2, 40), device="cuda"),
+    #                 )
+    #             except Exception as e:
+    #                 raise e
 
-            if is_custom_diffusion:
-                processor = CustomDiffusionXFormersAttnProcessor(
-                    train_kv=self.processor.train_kv,
-                    train_q_out=self.processor.train_q_out,
-                    hidden_size=self.processor.hidden_size,
-                    cross_attention_dim=self.processor.cross_attention_dim,
-                    attention_op=attention_op,
-                )
-                processor.load_state_dict(self.processor.state_dict())
-                if hasattr(self.processor, "to_k_custom_diffusion"):
-                    processor.to(self.processor.to_k_custom_diffusion.weight.device)
-            elif is_added_kv_processor:
-                # TODO(Patrick, Suraj, William) - currently xformers doesn't work for UnCLIP
-                # which uses this type of cross attention ONLY because the attention mask of format
-                # [0, ..., -10.000, ..., 0, ...,] is not supported
-                # throw warning
-                logger.info(
-                    "Memory efficient attention with `xformers` might currently not work correctly if an attention mask is required for the attention operation."
-                )
-                processor = XFormersAttnAddedKVProcessor(attention_op=attention_op)
-            else:
-                processor = XFormersAttnProcessor(attention_op=attention_op)
-        else:
-            if is_custom_diffusion:
-                attn_processor_class = (
-                    CustomDiffusionAttnProcessor2_0
-                    if hasattr(F, "scaled_dot_product_attention")
-                    else CustomDiffusionAttnProcessor
-                )
-                processor = attn_processor_class(
-                    train_kv=self.processor.train_kv,
-                    train_q_out=self.processor.train_q_out,
-                    hidden_size=self.processor.hidden_size,
-                    cross_attention_dim=self.processor.cross_attention_dim,
-                )
-                processor.load_state_dict(self.processor.state_dict())
-                if hasattr(self.processor, "to_k_custom_diffusion"):
-                    processor.to(self.processor.to_k_custom_diffusion.weight.device)
-            else:
-                # set attention processor
-                # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
-                # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
-                # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
-                processor = (
-                    AttnProcessor2_0()
-                    if hasattr(F, "scaled_dot_product_attention") and self.scale_qk
-                    else AttnProcessor()
-                )
+    #         if is_custom_diffusion:
+    #             processor = CustomDiffusionXFormersAttnProcessor(
+    #                 train_kv=self.processor.train_kv,
+    #                 train_q_out=self.processor.train_q_out,
+    #                 hidden_size=self.processor.hidden_size,
+    #                 cross_attention_dim=self.processor.cross_attention_dim,
+    #                 attention_op=attention_op,
+    #             )
+    #             processor.load_state_dict(self.processor.state_dict())
+    #             if hasattr(self.processor, "to_k_custom_diffusion"):
+    #                 processor.to(self.processor.to_k_custom_diffusion.weight.device)
+    #         elif is_added_kv_processor:
+    #             # TODO(Patrick, Suraj, William) - currently xformers doesn't work for UnCLIP
+    #             # which uses this type of cross attention ONLY because the attention mask of format
+    #             # [0, ..., -10.000, ..., 0, ...,] is not supported
+    #             # throw warning
+    #             logger.info(
+    #                 "Memory efficient attention with `xformers` might currently not work correctly if an attention mask is required for the attention operation."
+    #             )
+    #             processor = XFormersAttnAddedKVProcessor(attention_op=attention_op)
+    #         else:
+    #             processor = XFormersAttnProcessor(attention_op=attention_op)
+    #     else:
+    #         if is_custom_diffusion:
+    #             attn_processor_class = (
+    #                 CustomDiffusionAttnProcessor2_0
+    #                 if hasattr(F, "scaled_dot_product_attention")
+    #                 else CustomDiffusionAttnProcessor
+    #             )
+    #             processor = attn_processor_class(
+    #                 train_kv=self.processor.train_kv,
+    #                 train_q_out=self.processor.train_q_out,
+    #                 hidden_size=self.processor.hidden_size,
+    #                 cross_attention_dim=self.processor.cross_attention_dim,
+    #             )
+    #             processor.load_state_dict(self.processor.state_dict())
+    #             if hasattr(self.processor, "to_k_custom_diffusion"):
+    #                 processor.to(self.processor.to_k_custom_diffusion.weight.device)
+    #         else:
+    #             # set attention processor
+    #             # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
+    #             # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
+    #             # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
+    #             processor = (
+    #                 AttnProcessor2_0()
+    #                 if hasattr(F, "scaled_dot_product_attention") and self.scale_qk
+    #                 else AttnProcessor()
+    #             )
 
-        self.set_processor(processor)
+    #     self.set_processor(processor)
 
-    def set_attention_slice(self, slice_size: int) -> None:
-        r"""
-        Set the slice size for attention computation.
+    # def set_attention_slice(self, slice_size: int) -> None:
+    #     r"""
+    #     Set the slice size for attention computation.
 
-        Args:
-            slice_size (`int`):
-                The slice size for attention computation.
-        """
-        pdb.set_trace()
+    #     Args:
+    #         slice_size (`int`):
+    #             The slice size for attention computation.
+    #     """
+    #     pdb.set_trace()
 
-        if slice_size is not None and slice_size > self.sliceable_head_dim:
-            raise ValueError(f"slice_size {slice_size} has to be smaller or equal to {self.sliceable_head_dim}.")
+    #     if slice_size is not None and slice_size > self.sliceable_head_dim:
+    #         raise ValueError(f"slice_size {slice_size} has to be smaller or equal to {self.sliceable_head_dim}.")
 
-        if slice_size is not None and self.added_kv_proj_dim is not None:
-            processor = SlicedAttnAddedKVProcessor(slice_size)
-        elif slice_size is not None:
-            processor = SlicedAttnProcessor(slice_size)
-        elif self.added_kv_proj_dim is not None:
-            processor = AttnAddedKVProcessor()
-        else:
-            # set attention processor
-            # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
-            # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
-            # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
-            processor = (
-                AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
-            )
+    #     if slice_size is not None and self.added_kv_proj_dim is not None:
+    #         processor = SlicedAttnAddedKVProcessor(slice_size)
+    #     elif slice_size is not None:
+    #         processor = SlicedAttnProcessor(slice_size)
+    #     elif self.added_kv_proj_dim is not None:
+    #         processor = AttnAddedKVProcessor()
+    #     else:
+    #         # set attention processor
+    #         # We use the AttnProcessor2_0 by default when torch 2.x is used which uses
+    #         # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
+    #         # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
+    #         processor = (
+    #             AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
+    #         )
 
-        self.set_processor(processor)
+    #     self.set_processor(processor)
 
     def set_processor(self, processor: "AttnProcessor") -> None:
         # if current processor is in `self._modules` and if passed `processor` is not, we need to
         # pop `processor` from `self._modules`
         # ==> pdb.set_trace()
 
-        if (
-            hasattr(self, "processor")
-            and isinstance(self.processor, torch.nn.Module)
-            and not isinstance(processor, torch.nn.Module)
-        ):
-            pdb.set_trace()
-            logger.info(f"You are removing possibly trained weights of {self.processor} with {processor}")
-            self._modules.pop("processor")
+        # if (
+        #     hasattr(self, "processor")
+        #     and isinstance(self.processor, torch.nn.Module)
+        #     and not isinstance(processor, torch.nn.Module)
+        # ):
+        #     pdb.set_trace()
+        #     logger.info(f"You are removing possibly trained weights of {self.processor} with {processor}")
+        #     self._modules.pop("processor")
 
         self.processor = processor
 
-    def get_processor(self, return_deprecated_lora: bool = False) -> "AttentionProcessor":
-        pdb.set_trace()
+    # def get_processor(self, return_deprecated_lora: bool = False) -> "AttentionProcessor":
+    #     pdb.set_trace()
 
-        if not return_deprecated_lora:
-            return self.processor
+    #     if not return_deprecated_lora:
+    #         return self.processor
 
     def forward(self,
         hidden_states: torch.Tensor,
@@ -473,70 +472,72 @@ class Attention(nn.Module):
         )
 
     def batch_to_head_dim(self, tensor: torch.Tensor) -> torch.Tensor:
+        pdb.set_trace()
+
         head_size = self.heads
         batch_size, seq_len, dim = tensor.shape
         tensor = tensor.reshape(batch_size // head_size, head_size, seq_len, dim)
         tensor = tensor.permute(0, 2, 1, 3).reshape(batch_size // head_size, seq_len, dim * head_size)
         return tensor
 
-    def head_to_batch_dim(self, tensor: torch.Tensor, out_dim: int = 3) -> torch.Tensor:
-        pdb.set_trace()
+    # def head_to_batch_dim(self, tensor: torch.Tensor, out_dim: int = 3) -> torch.Tensor:
+    #     pdb.set_trace()
 
-        head_size = self.heads
-        if tensor.ndim == 3:
-            batch_size, seq_len, dim = tensor.shape
-            extra_dim = 1
-        else:
-            batch_size, extra_dim, seq_len, dim = tensor.shape
-        tensor = tensor.reshape(batch_size, seq_len * extra_dim, head_size, dim // head_size)
-        tensor = tensor.permute(0, 2, 1, 3)
+    #     head_size = self.heads
+    #     if tensor.ndim == 3:
+    #         batch_size, seq_len, dim = tensor.shape
+    #         extra_dim = 1
+    #     else:
+    #         batch_size, extra_dim, seq_len, dim = tensor.shape
+    #     tensor = tensor.reshape(batch_size, seq_len * extra_dim, head_size, dim // head_size)
+    #     tensor = tensor.permute(0, 2, 1, 3)
 
-        if out_dim == 3:
-            tensor = tensor.reshape(batch_size * head_size, seq_len * extra_dim, dim // head_size)
+    #     if out_dim == 3:
+    #         tensor = tensor.reshape(batch_size * head_size, seq_len * extra_dim, dim // head_size)
 
-        pdb.set_trace()
-        return tensor
+    #     pdb.set_trace()
+    #     return tensor
 
-    def get_attention_scores(
-        self, query: torch.Tensor, key: torch.Tensor, attention_mask: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        r"""
-        Compute the attention scores.
-        """
-        pdb.set_trace()
+    # def get_attention_scores(
+    #     self, query: torch.Tensor, key: torch.Tensor, attention_mask: Optional[torch.Tensor] = None
+    # ) -> torch.Tensor:
+    #     r"""
+    #     Compute the attention scores.
+    #     """
+    #     pdb.set_trace()
 
-        dtype = query.dtype
-        if self.upcast_attention:
-            query = query.float()
-            key = key.float()
+    #     dtype = query.dtype
+    #     if self.upcast_attention:
+    #         query = query.float()
+    #         key = key.float()
 
-        if attention_mask is None:
-            baddbmm_input = torch.empty(
-                query.shape[0], query.shape[1], key.shape[1], dtype=query.dtype, device=query.device
-            )
-            beta = 0
-        else:
-            baddbmm_input = attention_mask
-            beta = 1
+    #     if attention_mask is None:
+    #         baddbmm_input = torch.empty(
+    #             query.shape[0], query.shape[1], key.shape[1], dtype=query.dtype, device=query.device
+    #         )
+    #         beta = 0
+    #     else:
+    #         baddbmm_input = attention_mask
+    #         beta = 1
 
-        attention_scores = torch.baddbmm(
-            baddbmm_input,
-            query,
-            key.transpose(-1, -2),
-            beta=beta,
-            alpha=self.scale,
-        )
-        del baddbmm_input
+    #     attention_scores = torch.baddbmm(
+    #         baddbmm_input,
+    #         query,
+    #         key.transpose(-1, -2),
+    #         beta=beta,
+    #         alpha=self.scale,
+    #     )
+    #     del baddbmm_input
 
-        if self.upcast_softmax:
-            attention_scores = attention_scores.float()
+    #     if self.upcast_softmax:
+    #         attention_scores = attention_scores.float()
 
-        attention_probs = attention_scores.softmax(dim=-1)
-        del attention_scores
+    #     attention_probs = attention_scores.softmax(dim=-1)
+    #     del attention_scores
 
-        attention_probs = attention_probs.to(dtype)
+    #     attention_probs = attention_probs.to(dtype)
 
-        return attention_probs
+    #     return attention_probs
 
     def prepare_attention_mask(
         self, attention_mask: torch.Tensor, target_length: int, batch_size: int, out_dim: int = 3
@@ -544,6 +545,8 @@ class Attention(nn.Module):
         r"""
         Prepare the attention mask for the attention computation.
         """
+        pdb.set_trace()
+
         assert attention_mask is None
         head_size = self.heads
         if attention_mask is None:
@@ -573,77 +576,77 @@ class Attention(nn.Module):
 
         return attention_mask
 
-    def norm_encoder_hidden_states(self, encoder_hidden_states: torch.Tensor) -> torch.Tensor:
-        pdb.set_trace()
+    # def norm_encoder_hidden_states(self, encoder_hidden_states: torch.Tensor) -> torch.Tensor:
+    #     pdb.set_trace()
 
-        assert self.norm_cross is not None, "self.norm_cross must be defined to call self.norm_encoder_hidden_states"
+    #     assert self.norm_cross is not None, "self.norm_cross must be defined to call self.norm_encoder_hidden_states"
 
-        if isinstance(self.norm_cross, nn.LayerNorm):
-            encoder_hidden_states = self.norm_cross(encoder_hidden_states)
-        elif isinstance(self.norm_cross, nn.GroupNorm):
-            # Group norm norms along the channels dimension and expects
-            # input to be in the shape of (N, C, *). In this case, we want
-            # to norm along the hidden dimension, so we need to move
-            # (batch_size, sequence_length, hidden_size) ->
-            # (batch_size, hidden_size, sequence_length)
-            encoder_hidden_states = encoder_hidden_states.transpose(1, 2)
-            encoder_hidden_states = self.norm_cross(encoder_hidden_states)
-            encoder_hidden_states = encoder_hidden_states.transpose(1, 2)
-        else:
-            assert False
+    #     if isinstance(self.norm_cross, nn.LayerNorm):
+    #         encoder_hidden_states = self.norm_cross(encoder_hidden_states)
+    #     elif isinstance(self.norm_cross, nn.GroupNorm):
+    #         # Group norm norms along the channels dimension and expects
+    #         # input to be in the shape of (N, C, *). In this case, we want
+    #         # to norm along the hidden dimension, so we need to move
+    #         # (batch_size, sequence_length, hidden_size) ->
+    #         # (batch_size, hidden_size, sequence_length)
+    #         encoder_hidden_states = encoder_hidden_states.transpose(1, 2)
+    #         encoder_hidden_states = self.norm_cross(encoder_hidden_states)
+    #         encoder_hidden_states = encoder_hidden_states.transpose(1, 2)
+    #     else:
+    #         assert False
 
-        return encoder_hidden_states
+    #     return encoder_hidden_states
 
-    @torch.no_grad()
-    def fuse_projections(self, fuse=True):
-        pdb.set_trace()
+    # @torch.no_grad()
+    # def fuse_projections(self, fuse=True):
+    #     pdb.set_trace()
 
-        device = self.to_q.weight.data.device
-        dtype = self.to_q.weight.data.dtype
+    #     device = self.to_q.weight.data.device
+    #     dtype = self.to_q.weight.data.dtype
 
-        if not self.is_cross_attention:
-            # fetch weight matrices.
-            concatenated_weights = torch.cat([self.to_q.weight.data, self.to_k.weight.data, self.to_v.weight.data])
-            in_features = concatenated_weights.shape[1]
-            out_features = concatenated_weights.shape[0]
+    #     if not self.is_cross_attention:
+    #         # fetch weight matrices.
+    #         concatenated_weights = torch.cat([self.to_q.weight.data, self.to_k.weight.data, self.to_v.weight.data])
+    #         in_features = concatenated_weights.shape[1]
+    #         out_features = concatenated_weights.shape[0]
 
-            # create a new single projection layer and copy over the weights.
-            self.to_qkv = nn.Linear(in_features, out_features, bias=self.use_bias, device=device, dtype=dtype)
-            self.to_qkv.weight.copy_(concatenated_weights)
-            if self.use_bias:
-                concatenated_bias = torch.cat([self.to_q.bias.data, self.to_k.bias.data, self.to_v.bias.data])
-                self.to_qkv.bias.copy_(concatenated_bias)
+    #         # create a new single projection layer and copy over the weights.
+    #         self.to_qkv = nn.Linear(in_features, out_features, bias=self.use_bias, device=device, dtype=dtype)
+    #         self.to_qkv.weight.copy_(concatenated_weights)
+    #         if self.use_bias:
+    #             concatenated_bias = torch.cat([self.to_q.bias.data, self.to_k.bias.data, self.to_v.bias.data])
+    #             self.to_qkv.bias.copy_(concatenated_bias)
 
-        else:
-            concatenated_weights = torch.cat([self.to_k.weight.data, self.to_v.weight.data])
-            in_features = concatenated_weights.shape[1]
-            out_features = concatenated_weights.shape[0]
+    #     else:
+    #         concatenated_weights = torch.cat([self.to_k.weight.data, self.to_v.weight.data])
+    #         in_features = concatenated_weights.shape[1]
+    #         out_features = concatenated_weights.shape[0]
 
-            self.to_kv = nn.Linear(in_features, out_features, bias=self.use_bias, device=device, dtype=dtype)
-            self.to_kv.weight.copy_(concatenated_weights)
-            if self.use_bias:
-                concatenated_bias = torch.cat([self.to_k.bias.data, self.to_v.bias.data])
-                self.to_kv.bias.copy_(concatenated_bias)
+    #         self.to_kv = nn.Linear(in_features, out_features, bias=self.use_bias, device=device, dtype=dtype)
+    #         self.to_kv.weight.copy_(concatenated_weights)
+    #         if self.use_bias:
+    #             concatenated_bias = torch.cat([self.to_k.bias.data, self.to_v.bias.data])
+    #             self.to_kv.bias.copy_(concatenated_bias)
 
-        # handle added projections for SD3 and others.
-        if hasattr(self, "add_q_proj") and hasattr(self, "add_k_proj") and hasattr(self, "add_v_proj"):
-            concatenated_weights = torch.cat(
-                [self.add_q_proj.weight.data, self.add_k_proj.weight.data, self.add_v_proj.weight.data]
-            )
-            in_features = concatenated_weights.shape[1]
-            out_features = concatenated_weights.shape[0]
+    #     # handle added projections for SD3 and others.
+    #     if hasattr(self, "add_q_proj") and hasattr(self, "add_k_proj") and hasattr(self, "add_v_proj"):
+    #         concatenated_weights = torch.cat(
+    #             [self.add_q_proj.weight.data, self.add_k_proj.weight.data, self.add_v_proj.weight.data]
+    #         )
+    #         in_features = concatenated_weights.shape[1]
+    #         out_features = concatenated_weights.shape[0]
 
-            self.to_added_qkv = nn.Linear(
-                in_features, out_features, bias=self.added_proj_bias, device=device, dtype=dtype
-            )
-            self.to_added_qkv.weight.copy_(concatenated_weights)
-            if self.added_proj_bias:
-                concatenated_bias = torch.cat(
-                    [self.add_q_proj.bias.data, self.add_k_proj.bias.data, self.add_v_proj.bias.data]
-                )
-                self.to_added_qkv.bias.copy_(concatenated_bias)
+    #         self.to_added_qkv = nn.Linear(
+    #             in_features, out_features, bias=self.added_proj_bias, device=device, dtype=dtype
+    #         )
+    #         self.to_added_qkv.weight.copy_(concatenated_weights)
+    #         if self.added_proj_bias:
+    #             concatenated_bias = torch.cat(
+    #                 [self.add_q_proj.bias.data, self.add_k_proj.bias.data, self.add_v_proj.bias.data]
+    #             )
+    #             self.to_added_qkv.bias.copy_(concatenated_bias)
 
-        self.fused_projections = fuse
+    #     self.fused_projections = fuse
 
 class BaseOutput(OrderedDict):
     """
@@ -661,7 +664,8 @@ class BaseOutput(OrderedDict):
         if is_torch_available():
             import torch.utils._pytree
 
-            if is_torch_version("<", "2.2"):
+            if is_torch_version("<", "2.2"): # False
+                pdb.set_trace()
                 torch.utils._pytree._register_pytree_node(
                     cls,
                     torch.utils._pytree._dict_flatten,
@@ -769,35 +773,35 @@ class DiagonalGaussianDistribution(object):
         # todos.debug.output_var("sample", x)
         return x
 
-    def kl(self, other: "DiagonalGaussianDistribution" = None) -> torch.Tensor:
-        if self.deterministic:
-            return torch.Tensor([0.0])
-        else:
-            if other is None:
-                return 0.5 * torch.sum(
-                    torch.pow(self.mean, 2) + self.var - 1.0 - self.logvar,
-                    dim=[1, 2, 3],
-                )
-            else:
-                return 0.5 * torch.sum(
-                    torch.pow(self.mean - other.mean, 2) / other.var
-                    + self.var / other.var
-                    - 1.0
-                    - self.logvar
-                    + other.logvar,
-                    dim=[1, 2, 3],
-                )
-        pdb.set_trace()
+    # def kl(self, other: "DiagonalGaussianDistribution" = None) -> torch.Tensor:
+    #     if self.deterministic:
+    #         return torch.Tensor([0.0])
+    #     else:
+    #         if other is None:
+    #             return 0.5 * torch.sum(
+    #                 torch.pow(self.mean, 2) + self.var - 1.0 - self.logvar,
+    #                 dim=[1, 2, 3],
+    #             )
+    #         else:
+    #             return 0.5 * torch.sum(
+    #                 torch.pow(self.mean - other.mean, 2) / other.var
+    #                 + self.var / other.var
+    #                 - 1.0
+    #                 - self.logvar
+    #                 + other.logvar,
+    #                 dim=[1, 2, 3],
+    #             )
+    #     pdb.set_trace()
 
-    def nll(self, sample: torch.Tensor, dims: Tuple[int, ...] = [1, 2, 3]) -> torch.Tensor:
-        if self.deterministic:
-            return torch.Tensor([0.0])
-        logtwopi = np.log(2.0 * np.pi)
-        return 0.5 * torch.sum(
-            logtwopi + self.logvar + torch.pow(sample - self.mean, 2) / self.var,
-            dim=dims,
-        )
-        pdb.set_trace()
+    # def nll(self, sample: torch.Tensor, dims: Tuple[int, ...] = [1, 2, 3]) -> torch.Tensor:
+    #     if self.deterministic:
+    #         return torch.Tensor([0.0])
+    #     logtwopi = np.log(2.0 * np.pi)
+    #     return 0.5 * torch.sum(
+    #         logtwopi + self.logvar + torch.pow(sample - self.mean, 2) / self.var,
+    #         dim=dims,
+    #     )
+    #     pdb.set_trace()
 
     def mode(self) -> torch.Tensor:
         return self.mean
@@ -905,6 +909,8 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
         # pdb.set_trace()
 
     def _set_gradient_checkpointing(self, module, value=False):
+        pdb.set_trace()
+
         if isinstance(module, (Encoder, TemporalDecoder)):
             module.gradient_checkpointing = value
 
@@ -934,47 +940,47 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
     #     pdb.set_trace()
     #     return processors
 
-    # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
-    def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
-        r"""
-        Sets the attention processor to use to compute attention.
-        """
-        pdb.set_trace()
+    # # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
+    # def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
+    #     r"""
+    #     Sets the attention processor to use to compute attention.
+    #     """
+    #     pdb.set_trace()
 
-        count = len(self.attn_processors.keys())
+    #     count = len(self.attn_processors.keys())
 
-        if isinstance(processor, dict) and len(processor) != count:
-            raise ValueError(
-                f"A dict of processors was passed, but the number of processors {len(processor)} does not match the"
-                f" number of attention layers: {count}. Please make sure to pass {count} processor classes."
-            )
+    #     if isinstance(processor, dict) and len(processor) != count:
+    #         raise ValueError(
+    #             f"A dict of processors was passed, but the number of processors {len(processor)} does not match the"
+    #             f" number of attention layers: {count}. Please make sure to pass {count} processor classes."
+    #         )
 
-        def fn_recursive_attn_processor(name: str, module: torch.nn.Module, processor):
-            if hasattr(module, "set_processor"):
-                if not isinstance(processor, dict):
-                    module.set_processor(processor)
-                else:
-                    module.set_processor(processor.pop(f"{name}.processor"))
+    #     def fn_recursive_attn_processor(name: str, module: torch.nn.Module, processor):
+    #         if hasattr(module, "set_processor"):
+    #             if not isinstance(processor, dict):
+    #                 module.set_processor(processor)
+    #             else:
+    #                 module.set_processor(processor.pop(f"{name}.processor"))
 
-            for sub_name, child in module.named_children():
-                fn_recursive_attn_processor(f"{name}.{sub_name}", child, processor)
+    #         for sub_name, child in module.named_children():
+    #             fn_recursive_attn_processor(f"{name}.{sub_name}", child, processor)
 
-        for name, module in self.named_children():
-            fn_recursive_attn_processor(name, module, processor)
+    #     for name, module in self.named_children():
+    #         fn_recursive_attn_processor(name, module, processor)
 
-    def set_default_attn_processor(self):
-        """
-        Disables custom attention processors and sets the default attention implementation.
-        """
-        if all(proc.__class__ in CROSS_ATTENTION_PROCESSORS for proc in self.attn_processors.values()):
-            processor = AttnProcessor()
-        else:
-            raise ValueError(
-                f"Cannot call `set_default_attn_processor` when attention processors are of type {next(iter(self.attn_processors.values()))}"
-            )
+    # def set_default_attn_processor(self):
+    #     """
+    #     Disables custom attention processors and sets the default attention implementation.
+    #     """
+    #     if all(proc.__class__ in CROSS_ATTENTION_PROCESSORS for proc in self.attn_processors.values()):
+    #         processor = AttnProcessor()
+    #     else:
+    #         raise ValueError(
+    #             f"Cannot call `set_default_attn_processor` when attention processors are of type {next(iter(self.attn_processors.values()))}"
+    #         )
 
-        pdb.set_trace()
-        self.set_attn_processor(processor)
+    #     pdb.set_trace()
+    #     self.set_attn_processor(processor)
 
     @apply_forward_hook
     def encode(self, x: torch.Tensor, return_dict: bool = True):
@@ -1097,45 +1103,45 @@ class UNetMidBlock2D(nn.Module):
 
         # there is always at least one resnet
         assert resnet_time_scale_shift == "default"
-        if resnet_time_scale_shift == "spatial": # False
-            resnets = [
-                ResnetBlockCondNorm2D(
-                    in_channels=in_channels,
-                    out_channels=in_channels,
-                    temb_channels=temb_channels,
-                    eps=resnet_eps,
-                    groups=resnet_groups,
-                    dropout=dropout,
-                    time_embedding_norm="spatial",
-                    non_linearity=resnet_act_fn,
-                    output_scale_factor=output_scale_factor,
-                )
-            ]
-        else:
-            assert resnet_pre_norm == True
-            assert temb_channels == None
-            resnets = [
-                ResnetBlock2D(
-                    in_channels=in_channels,
-                    out_channels=in_channels,
-                    temb_channels=temb_channels,
-                    eps=resnet_eps,
-                    groups=resnet_groups,
-                    dropout=dropout,
-                    time_embedding_norm=resnet_time_scale_shift,
-                    non_linearity=resnet_act_fn,
-                    output_scale_factor=output_scale_factor,
-                    pre_norm=resnet_pre_norm,
-                )
-            ]
+        # if resnet_time_scale_shift == "spatial": # False
+        #     resnets = [
+        #         ResnetBlockCondNorm2D(
+        #             in_channels=in_channels,
+        #             out_channels=in_channels,
+        #             temb_channels=temb_channels,
+        #             eps=resnet_eps,
+        #             groups=resnet_groups,
+        #             dropout=dropout,
+        #             time_embedding_norm="spatial",
+        #             non_linearity=resnet_act_fn,
+        #             output_scale_factor=output_scale_factor,
+        #         )
+        #     ]
+        # else:
+        assert resnet_pre_norm == True
+        assert temb_channels == None
+        resnets = [
+            ResnetBlock2D(
+                in_channels=in_channels,
+                out_channels=in_channels,
+                temb_channels=temb_channels,
+                eps=resnet_eps,
+                groups=resnet_groups,
+                dropout=dropout,
+                time_embedding_norm=resnet_time_scale_shift,
+                non_linearity=resnet_act_fn,
+                output_scale_factor=output_scale_factor,
+                pre_norm=resnet_pre_norm,
+            )
+        ]
         attentions = []
 
-        if attention_head_dim is None:
-            pdb.set_trace()
-            logger.warning(
-                f"It is not recommend to pass `attention_head_dim=None`. Defaulting `attention_head_dim` to `in_channels`: {in_channels}."
-            )
-            attention_head_dim = in_channels
+        # if attention_head_dim is None:
+        #     pdb.set_trace()
+        #     logger.warning(
+        #         f"It is not recommend to pass `attention_head_dim=None`. Defaulting `attention_head_dim` to `in_channels`: {in_channels}."
+        #     )
+        #     attention_head_dim = in_channels
 
         assert num_layers == 1
         for _ in range(num_layers):
@@ -1155,39 +1161,39 @@ class UNetMidBlock2D(nn.Module):
                         upcast_softmax=True,
                     )
                 )
-            else:
-                pdb.set_trace()
-                attentions.append(None)
+            # else:
+            #     pdb.set_trace()
+            #     attentions.append(None)
 
-            if resnet_time_scale_shift == "spatial": # False
-                resnets.append(
-                    ResnetBlockCondNorm2D(
-                        in_channels=in_channels,
-                        out_channels=in_channels,
-                        temb_channels=temb_channels,
-                        eps=resnet_eps,
-                        groups=resnet_groups,
-                        dropout=dropout,
-                        time_embedding_norm="spatial",
-                        non_linearity=resnet_act_fn,
-                        output_scale_factor=output_scale_factor,
-                    )
+            # if resnet_time_scale_shift == "spatial": # False
+            #     resnets.append(
+            #         ResnetBlockCondNorm2D(
+            #             in_channels=in_channels,
+            #             out_channels=in_channels,
+            #             temb_channels=temb_channels,
+            #             eps=resnet_eps,
+            #             groups=resnet_groups,
+            #             dropout=dropout,
+            #             time_embedding_norm="spatial",
+            #             non_linearity=resnet_act_fn,
+            #             output_scale_factor=output_scale_factor,
+            #         )
+            #     )
+            # else:
+            resnets.append(
+                ResnetBlock2D(
+                    in_channels=in_channels,
+                    out_channels=in_channels,
+                    temb_channels=temb_channels,
+                    eps=resnet_eps,
+                    groups=resnet_groups,
+                    dropout=dropout,
+                    time_embedding_norm=resnet_time_scale_shift,
+                    non_linearity=resnet_act_fn,
+                    output_scale_factor=output_scale_factor,
+                    pre_norm=resnet_pre_norm,
                 )
-            else:
-                resnets.append(
-                    ResnetBlock2D(
-                        in_channels=in_channels,
-                        out_channels=in_channels,
-                        temb_channels=temb_channels,
-                        eps=resnet_eps,
-                        groups=resnet_groups,
-                        dropout=dropout,
-                        time_embedding_norm=resnet_time_scale_shift,
-                        non_linearity=resnet_act_fn,
-                        output_scale_factor=output_scale_factor,
-                        pre_norm=resnet_pre_norm,
-                    )
-                )
+            )
 
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
@@ -1226,11 +1232,11 @@ class UNetMidBlock2D(nn.Module):
 
         hidden_states = self.resnets[0](hidden_states, temb)
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
-            if attn is not None:
-                hidden_states = attn(hidden_states, temb=temb)
-            else:
-                pdb.set_trace()
-
+            # if attn is not None:
+            #     hidden_states = attn(hidden_states, temb=temb)
+            # else:
+            #     pdb.set_trace()
+            hidden_states = attn(hidden_states, temb=temb)
             hidden_states = resnet(hidden_states, temb)
         # todos.debug.output_var("hidden_states2", hidden_states)
 
@@ -1382,19 +1388,44 @@ class Encoder(nn.Module):
             output_channel = block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
 
-            down_block = get_down_block(
-                down_block_type,
-                num_layers=self.layers_per_block,
+            # down_block = get_down_block(
+            #     down_block_type,
+            #     num_layers=self.layers_per_block,
+            #     in_channels=input_channel,
+            #     out_channels=output_channel,
+            #     add_downsample=not is_final_block,
+            #     resnet_eps=1e-6,
+            #     downsample_padding=0,
+            #     resnet_act_fn=act_fn,
+            #     resnet_groups=norm_num_groups,
+            #     attention_head_dim=output_channel,
+            #     temb_channels=None,
+            # )
+            down_block = DownEncoderBlock2D(
                 in_channels=input_channel,
                 out_channels=output_channel,
+                num_layers=self.layers_per_block,
+                # dropout=dropout,
                 add_downsample=not is_final_block,
                 resnet_eps=1e-6,
-                downsample_padding=0,
                 resnet_act_fn=act_fn,
                 resnet_groups=norm_num_groups,
-                attention_head_dim=output_channel,
-                temb_channels=None,
+                downsample_padding=0,
+                # resnet_time_scale_shift=resnet_time_scale_shift,
             )
+            # in_channels: int,
+            # out_channels: int,
+            # dropout: float = 0.0,
+            # num_layers: int = 1,
+            # resnet_eps: float = 1e-6,
+            # resnet_time_scale_shift: str = "default",
+            # resnet_act_fn: str = "swish",
+            # resnet_groups: int = 32,
+            # resnet_pre_norm: bool = True,
+            # output_scale_factor: float = 1.0,
+            # add_downsample: bool = True,
+            # downsample_padding: int = 1,
+
             self.down_blocks.append(down_block)
 
         # mid
@@ -1441,257 +1472,257 @@ class Encoder(nn.Module):
         return sample
 
 
-def get_down_block(
-    down_block_type: str,
-    num_layers: int,
-    in_channels: int,
-    out_channels: int,
-    temb_channels: int,
-    add_downsample: bool,
-    resnet_eps: float,
-    resnet_act_fn: str,
-    transformer_layers_per_block: int = 1,
-    num_attention_heads: Optional[int] = None,
-    resnet_groups: Optional[int] = None,
-    cross_attention_dim: Optional[int] = None,
-    downsample_padding: Optional[int] = None,
-    dual_cross_attention: bool = False,
-    use_linear_projection: bool = False,
-    only_cross_attention: bool = False,
-    upcast_attention: bool = False,
-    resnet_time_scale_shift: str = "default",
-    attention_type: str = "default",
-    resnet_skip_time_act: bool = False,
-    resnet_out_scale_factor: float = 1.0,
-    cross_attention_norm: Optional[str] = None,
-    attention_head_dim: Optional[int] = None,
-    downsample_type: Optional[str] = None,
-    dropout: float = 0.0,
-):
-    # down_block_type = 'DownEncoderBlock2D'
-    # num_layers = 2
-    # in_channels = 128
-    # out_channels = 128
-    # temb_channels = None
-    # add_downsample = True
-    # resnet_eps = 1e-06
-    # resnet_act_fn = 'silu'
-    # transformer_layers_per_block = 1
-    # num_attention_heads = None
-    # resnet_groups = 32
-    # cross_attention_dim = None
-    # downsample_padding = 0
-    # dual_cross_attention = False
-    # use_linear_projection = False
-    # only_cross_attention = False
-    # upcast_attention = False
-    # resnet_time_scale_shift = 'default'
-    # attention_type = 'default'
-    # resnet_skip_time_act = False
-    # resnet_out_scale_factor = 1.0
-    # cross_attention_norm = None
-    # attention_head_dim = 128
-    # downsample_type = None
-    # dropout = 0.0
+# def get_down_block(
+#     down_block_type: str,
+#     num_layers: int,
+#     in_channels: int,
+#     out_channels: int,
+#     temb_channels: int,
+#     add_downsample: bool,
+#     resnet_eps: float,
+#     resnet_act_fn: str,
+#     transformer_layers_per_block: int = 1,
+#     num_attention_heads: Optional[int] = None,
+#     resnet_groups: Optional[int] = None,
+#     cross_attention_dim: Optional[int] = None,
+#     downsample_padding: Optional[int] = None,
+#     dual_cross_attention: bool = False,
+#     use_linear_projection: bool = False,
+#     only_cross_attention: bool = False,
+#     upcast_attention: bool = False,
+#     resnet_time_scale_shift: str = "default",
+#     attention_type: str = "default",
+#     resnet_skip_time_act: bool = False,
+#     resnet_out_scale_factor: float = 1.0,
+#     cross_attention_norm: Optional[str] = None,
+#     attention_head_dim: Optional[int] = None,
+#     downsample_type: Optional[str] = None,
+#     dropout: float = 0.0,
+# ):
+#     # down_block_type = 'DownEncoderBlock2D'
+#     # num_layers = 2
+#     # in_channels = 128
+#     # out_channels = 128
+#     # temb_channels = None
+#     # add_downsample = True
+#     # resnet_eps = 1e-06
+#     # resnet_act_fn = 'silu'
+#     # transformer_layers_per_block = 1
+#     # num_attention_heads = None
+#     # resnet_groups = 32
+#     # cross_attention_dim = None
+#     # downsample_padding = 0
+#     # dual_cross_attention = False
+#     # use_linear_projection = False
+#     # only_cross_attention = False
+#     # upcast_attention = False
+#     # resnet_time_scale_shift = 'default'
+#     # attention_type = 'default'
+#     # resnet_skip_time_act = False
+#     # resnet_out_scale_factor = 1.0
+#     # cross_attention_norm = None
+#     # attention_head_dim = 128
+#     # downsample_type = None
+#     # dropout = 0.0
 
-    # return DownEncoderBlock2D(
-    #     num_layers=num_layers,
-    #     in_channels=in_channels,
-    #     out_channels=out_channels,
-    #     dropout=dropout,
-    #     add_downsample=add_downsample,
-    #     resnet_eps=resnet_eps,
-    #     resnet_act_fn=resnet_act_fn,
-    #     resnet_groups=resnet_groups,
-    #     downsample_padding=downsample_padding,
-    #     resnet_time_scale_shift=resnet_time_scale_shift,
-    # )
-    # assert attention_head_dim == 128
+#     # return DownEncoderBlock2D(
+#     #     num_layers=num_layers,
+#     #     in_channels=in_channels,
+#     #     out_channels=out_channels,
+#     #     dropout=dropout,
+#     #     add_downsample=add_downsample,
+#     #     resnet_eps=resnet_eps,
+#     #     resnet_act_fn=resnet_act_fn,
+#     #     resnet_groups=resnet_groups,
+#     #     downsample_padding=downsample_padding,
+#     #     resnet_time_scale_shift=resnet_time_scale_shift,
+#     # )
+#     # assert attention_head_dim == 128
 
-    # If attn head dim is not defined, we default it to the number of heads
-    if attention_head_dim is None:
-        logger.warning(
-            f"It is recommended to provide `attention_head_dim` when calling `get_down_block`. Defaulting `attention_head_dim` to {num_attention_heads}."
-        )
-        attention_head_dim = num_attention_heads
+#     # If attn head dim is not defined, we default it to the number of heads
+#     if attention_head_dim is None:
+#         logger.warning(
+#             f"It is recommended to provide `attention_head_dim` when calling `get_down_block`. Defaulting `attention_head_dim` to {num_attention_heads}."
+#         )
+#         attention_head_dim = num_attention_heads
 
 
-    down_block_type = down_block_type[7:] if down_block_type.startswith("UNetRes") else down_block_type
-    # DownEncoderBlock2D
-    assert down_block_type == "DownEncoderBlock2D"
+#     down_block_type = down_block_type[7:] if down_block_type.startswith("UNetRes") else down_block_type
+#     # DownEncoderBlock2D
+#     assert down_block_type == "DownEncoderBlock2D"
 
-    if down_block_type == "DownBlock2D":
-        return DownBlock2D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            temb_channels=temb_channels,
-            dropout=dropout,
-            add_downsample=add_downsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            resnet_groups=resnet_groups,
-            downsample_padding=downsample_padding,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-        )
-    elif down_block_type == "ResnetDownsampleBlock2D":
-        return ResnetDownsampleBlock2D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            temb_channels=temb_channels,
-            dropout=dropout,
-            add_downsample=add_downsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            resnet_groups=resnet_groups,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-            skip_time_act=resnet_skip_time_act,
-            output_scale_factor=resnet_out_scale_factor,
-        )
-    elif down_block_type == "AttnDownBlock2D":
-        if add_downsample is False:
-            downsample_type = None
-        else:
-            downsample_type = downsample_type or "conv"  # default to 'conv'
-        return AttnDownBlock2D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            temb_channels=temb_channels,
-            dropout=dropout,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            resnet_groups=resnet_groups,
-            downsample_padding=downsample_padding,
-            attention_head_dim=attention_head_dim,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-            downsample_type=downsample_type,
-        )
-    elif down_block_type == "CrossAttnDownBlock2D":
-        if cross_attention_dim is None:
-            raise ValueError("cross_attention_dim must be specified for CrossAttnDownBlock2D")
-        return CrossAttnDownBlock2D(
-            num_layers=num_layers,
-            transformer_layers_per_block=transformer_layers_per_block,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            temb_channels=temb_channels,
-            dropout=dropout,
-            add_downsample=add_downsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            resnet_groups=resnet_groups,
-            downsample_padding=downsample_padding,
-            cross_attention_dim=cross_attention_dim,
-            num_attention_heads=num_attention_heads,
-            dual_cross_attention=dual_cross_attention,
-            use_linear_projection=use_linear_projection,
-            only_cross_attention=only_cross_attention,
-            upcast_attention=upcast_attention,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-            attention_type=attention_type,
-        )
-    elif down_block_type == "SimpleCrossAttnDownBlock2D":
-        if cross_attention_dim is None:
-            raise ValueError("cross_attention_dim must be specified for SimpleCrossAttnDownBlock2D")
-        return SimpleCrossAttnDownBlock2D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            temb_channels=temb_channels,
-            dropout=dropout,
-            add_downsample=add_downsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            resnet_groups=resnet_groups,
-            cross_attention_dim=cross_attention_dim,
-            attention_head_dim=attention_head_dim,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-            skip_time_act=resnet_skip_time_act,
-            output_scale_factor=resnet_out_scale_factor,
-            only_cross_attention=only_cross_attention,
-            cross_attention_norm=cross_attention_norm,
-        )
-    elif down_block_type == "SkipDownBlock2D":
-        return SkipDownBlock2D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            temb_channels=temb_channels,
-            dropout=dropout,
-            add_downsample=add_downsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            downsample_padding=downsample_padding,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-        )
-    elif down_block_type == "AttnSkipDownBlock2D":
-        return AttnSkipDownBlock2D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            temb_channels=temb_channels,
-            dropout=dropout,
-            add_downsample=add_downsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            attention_head_dim=attention_head_dim,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-        )
-    elif down_block_type == "DownEncoderBlock2D": # True
-        return DownEncoderBlock2D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            dropout=dropout,
-            add_downsample=add_downsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            resnet_groups=resnet_groups,
-            downsample_padding=downsample_padding,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-        )
-    elif down_block_type == "AttnDownEncoderBlock2D":
-        return AttnDownEncoderBlock2D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            dropout=dropout,
-            add_downsample=add_downsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            resnet_groups=resnet_groups,
-            downsample_padding=downsample_padding,
-            attention_head_dim=attention_head_dim,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-        )
-    elif down_block_type == "KDownBlock2D":
-        return KDownBlock2D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            temb_channels=temb_channels,
-            dropout=dropout,
-            add_downsample=add_downsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-        )
-    elif down_block_type == "KCrossAttnDownBlock2D":
-        return KCrossAttnDownBlock2D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            temb_channels=temb_channels,
-            dropout=dropout,
-            add_downsample=add_downsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            cross_attention_dim=cross_attention_dim,
-            attention_head_dim=attention_head_dim,
-            add_self_attention=True if not add_downsample else False,
-        )
-    raise ValueError(f"{down_block_type} does not exist.")
+#     if down_block_type == "DownBlock2D":
+#         return DownBlock2D(
+#             num_layers=num_layers,
+#             in_channels=in_channels,
+#             out_channels=out_channels,
+#             temb_channels=temb_channels,
+#             dropout=dropout,
+#             add_downsample=add_downsample,
+#             resnet_eps=resnet_eps,
+#             resnet_act_fn=resnet_act_fn,
+#             resnet_groups=resnet_groups,
+#             downsample_padding=downsample_padding,
+#             resnet_time_scale_shift=resnet_time_scale_shift,
+#         )
+#     elif down_block_type == "ResnetDownsampleBlock2D":
+#         return ResnetDownsampleBlock2D(
+#             num_layers=num_layers,
+#             in_channels=in_channels,
+#             out_channels=out_channels,
+#             temb_channels=temb_channels,
+#             dropout=dropout,
+#             add_downsample=add_downsample,
+#             resnet_eps=resnet_eps,
+#             resnet_act_fn=resnet_act_fn,
+#             resnet_groups=resnet_groups,
+#             resnet_time_scale_shift=resnet_time_scale_shift,
+#             skip_time_act=resnet_skip_time_act,
+#             output_scale_factor=resnet_out_scale_factor,
+#         )
+#     elif down_block_type == "AttnDownBlock2D":
+#         if add_downsample is False:
+#             downsample_type = None
+#         else:
+#             downsample_type = downsample_type or "conv"  # default to 'conv'
+#         return AttnDownBlock2D(
+#             num_layers=num_layers,
+#             in_channels=in_channels,
+#             out_channels=out_channels,
+#             temb_channels=temb_channels,
+#             dropout=dropout,
+#             resnet_eps=resnet_eps,
+#             resnet_act_fn=resnet_act_fn,
+#             resnet_groups=resnet_groups,
+#             downsample_padding=downsample_padding,
+#             attention_head_dim=attention_head_dim,
+#             resnet_time_scale_shift=resnet_time_scale_shift,
+#             downsample_type=downsample_type,
+#         )
+#     elif down_block_type == "CrossAttnDownBlock2D":
+#         if cross_attention_dim is None:
+#             raise ValueError("cross_attention_dim must be specified for CrossAttnDownBlock2D")
+#         return CrossAttnDownBlock2D(
+#             num_layers=num_layers,
+#             transformer_layers_per_block=transformer_layers_per_block,
+#             in_channels=in_channels,
+#             out_channels=out_channels,
+#             temb_channels=temb_channels,
+#             dropout=dropout,
+#             add_downsample=add_downsample,
+#             resnet_eps=resnet_eps,
+#             resnet_act_fn=resnet_act_fn,
+#             resnet_groups=resnet_groups,
+#             downsample_padding=downsample_padding,
+#             cross_attention_dim=cross_attention_dim,
+#             num_attention_heads=num_attention_heads,
+#             dual_cross_attention=dual_cross_attention,
+#             use_linear_projection=use_linear_projection,
+#             only_cross_attention=only_cross_attention,
+#             upcast_attention=upcast_attention,
+#             resnet_time_scale_shift=resnet_time_scale_shift,
+#             attention_type=attention_type,
+#         )
+#     elif down_block_type == "SimpleCrossAttnDownBlock2D":
+#         if cross_attention_dim is None:
+#             raise ValueError("cross_attention_dim must be specified for SimpleCrossAttnDownBlock2D")
+#         return SimpleCrossAttnDownBlock2D(
+#             num_layers=num_layers,
+#             in_channels=in_channels,
+#             out_channels=out_channels,
+#             temb_channels=temb_channels,
+#             dropout=dropout,
+#             add_downsample=add_downsample,
+#             resnet_eps=resnet_eps,
+#             resnet_act_fn=resnet_act_fn,
+#             resnet_groups=resnet_groups,
+#             cross_attention_dim=cross_attention_dim,
+#             attention_head_dim=attention_head_dim,
+#             resnet_time_scale_shift=resnet_time_scale_shift,
+#             skip_time_act=resnet_skip_time_act,
+#             output_scale_factor=resnet_out_scale_factor,
+#             only_cross_attention=only_cross_attention,
+#             cross_attention_norm=cross_attention_norm,
+#         )
+#     elif down_block_type == "SkipDownBlock2D":
+#         return SkipDownBlock2D(
+#             num_layers=num_layers,
+#             in_channels=in_channels,
+#             out_channels=out_channels,
+#             temb_channels=temb_channels,
+#             dropout=dropout,
+#             add_downsample=add_downsample,
+#             resnet_eps=resnet_eps,
+#             resnet_act_fn=resnet_act_fn,
+#             downsample_padding=downsample_padding,
+#             resnet_time_scale_shift=resnet_time_scale_shift,
+#         )
+#     elif down_block_type == "AttnSkipDownBlock2D":
+#         return AttnSkipDownBlock2D(
+#             num_layers=num_layers,
+#             in_channels=in_channels,
+#             out_channels=out_channels,
+#             temb_channels=temb_channels,
+#             dropout=dropout,
+#             add_downsample=add_downsample,
+#             resnet_eps=resnet_eps,
+#             resnet_act_fn=resnet_act_fn,
+#             attention_head_dim=attention_head_dim,
+#             resnet_time_scale_shift=resnet_time_scale_shift,
+#         )
+#     elif down_block_type == "DownEncoderBlock2D": # True
+#         return DownEncoderBlock2D(
+#             num_layers=num_layers,
+#             in_channels=in_channels,
+#             out_channels=out_channels,
+#             dropout=dropout,
+#             add_downsample=add_downsample,
+#             resnet_eps=resnet_eps,
+#             resnet_act_fn=resnet_act_fn,
+#             resnet_groups=resnet_groups,
+#             downsample_padding=downsample_padding,
+#             resnet_time_scale_shift=resnet_time_scale_shift,
+#         )
+#     elif down_block_type == "AttnDownEncoderBlock2D":
+#         return AttnDownEncoderBlock2D(
+#             num_layers=num_layers,
+#             in_channels=in_channels,
+#             out_channels=out_channels,
+#             dropout=dropout,
+#             add_downsample=add_downsample,
+#             resnet_eps=resnet_eps,
+#             resnet_act_fn=resnet_act_fn,
+#             resnet_groups=resnet_groups,
+#             downsample_padding=downsample_padding,
+#             attention_head_dim=attention_head_dim,
+#             resnet_time_scale_shift=resnet_time_scale_shift,
+#         )
+#     elif down_block_type == "KDownBlock2D":
+#         return KDownBlock2D(
+#             num_layers=num_layers,
+#             in_channels=in_channels,
+#             out_channels=out_channels,
+#             temb_channels=temb_channels,
+#             dropout=dropout,
+#             add_downsample=add_downsample,
+#             resnet_eps=resnet_eps,
+#             resnet_act_fn=resnet_act_fn,
+#         )
+#     elif down_block_type == "KCrossAttnDownBlock2D":
+#         return KCrossAttnDownBlock2D(
+#             num_layers=num_layers,
+#             in_channels=in_channels,
+#             out_channels=out_channels,
+#             temb_channels=temb_channels,
+#             dropout=dropout,
+#             add_downsample=add_downsample,
+#             resnet_eps=resnet_eps,
+#             resnet_act_fn=resnet_act_fn,
+#             cross_attention_dim=cross_attention_dim,
+#             attention_head_dim=attention_head_dim,
+#             add_self_attention=True if not add_downsample else False,
+#         )
+#     raise ValueError(f"{down_block_type} does not exist.")
 
 
 
@@ -1976,9 +2007,9 @@ class Downsample2D(nn.Module):
         #     deprecate("scale", "1.0.0", deprecation_message)
         assert hidden_states.shape[1] == self.channels
 
-        assert self.norm == None
-        if self.norm is not None:
-            hidden_states = self.norm(hidden_states.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        # assert self.norm == None
+        # if self.norm is not None:
+        #     hidden_states = self.norm(hidden_states.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
         assert self.use_conv and self.padding == 0
         if self.use_conv and self.padding == 0: # True
@@ -2031,15 +2062,16 @@ class Upsample2D(nn.Module):
         self.name = name
         self.interpolate = interpolate
 
-        assert norm_type == None
-        if norm_type == "ln_norm":
-            self.norm = nn.LayerNorm(channels, eps, elementwise_affine)
-        elif norm_type == "rms_norm":
-            self.norm = RMSNorm(channels, eps, elementwise_affine)
-        elif norm_type is None:
-            self.norm = None
-        else:
-            raise ValueError(f"unknown norm_type: {norm_type}")
+        # assert norm_type == None
+        # if norm_type == "ln_norm":
+        #     self.norm = nn.LayerNorm(channels, eps, elementwise_affine)
+        # elif norm_type == "rms_norm":
+        #     self.norm = RMSNorm(channels, eps, elementwise_affine)
+        # elif norm_type is None:
+        #     self.norm = None
+        # else:
+        #     raise ValueError(f"unknown norm_type: {norm_type}")
+        self.norm = None
 
         assert use_conv_transpose == False
         conv = None
@@ -2073,13 +2105,13 @@ class Upsample2D(nn.Module):
     def forward(self, hidden_states: torch.Tensor, output_size= None):
         assert hidden_states.shape[1] == self.channels
 
-        if self.norm is not None: # False
-            pdb.set_trace()
-            hidden_states = self.norm(hidden_states.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        # if self.norm is not None: # False
+        #     pdb.set_trace()
+        #     hidden_states = self.norm(hidden_states.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
-        if self.use_conv_transpose:
-            pdb.set_trace()
-            return self.conv(hidden_states)
+        # if self.use_conv_transpose:
+        #     pdb.set_trace()
+        #     return self.conv(hidden_states)
 
         # Cast to float32 to as 'upsample_nearest2d_out_frame' op does not support bfloat16
         # TODO(Suraj): Remove this cast once the issue is fixed in PyTorch
@@ -2162,14 +2194,14 @@ class ResnetBlock2D(nn.Module):
         # conv_2d_out_channels = 128
         assert time_embedding_norm == 'default'
 
-        if time_embedding_norm == "ada_group":
-            raise ValueError(
-                "This class cannot be used with `time_embedding_norm==ada_group`, please use `ResnetBlockCondNorm2D` instead",
-            )
-        if time_embedding_norm == "spatial":
-            raise ValueError(
-                "This class cannot be used with `time_embedding_norm==spatial`, please use `ResnetBlockCondNorm2D` instead",
-            )
+        # if time_embedding_norm == "ada_group":
+        #     raise ValueError(
+        #         "This class cannot be used with `time_embedding_norm==ada_group`, please use `ResnetBlockCondNorm2D` instead",
+        #     )
+        # if time_embedding_norm == "spatial":
+        #     raise ValueError(
+        #         "This class cannot be used with `time_embedding_norm==spatial`, please use `ResnetBlockCondNorm2D` instead",
+        #     )
 
         self.pre_norm = True
         self.in_channels = in_channels
@@ -2189,16 +2221,17 @@ class ResnetBlock2D(nn.Module):
 
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
 
-        assert temb_channels == None
-        if temb_channels is not None: # False
-            if self.time_embedding_norm == "default":
-                self.time_emb_proj = nn.Linear(temb_channels, out_channels)
-            elif self.time_embedding_norm == "scale_shift":
-                self.time_emb_proj = nn.Linear(temb_channels, 2 * out_channels)
-            else:
-                raise ValueError(f"unknown time_embedding_norm : {self.time_embedding_norm} ")
-        else:
-            self.time_emb_proj = None
+        # assert temb_channels == None
+        # if temb_channels is not None: # False
+        #     if self.time_embedding_norm == "default":
+        #         self.time_emb_proj = nn.Linear(temb_channels, out_channels)
+        #     elif self.time_embedding_norm == "scale_shift":
+        #         self.time_emb_proj = nn.Linear(temb_channels, 2 * out_channels)
+        #     else:
+        #         raise ValueError(f"unknown time_embedding_norm : {self.time_embedding_norm} ")
+        # else:
+        #     self.time_emb_proj = None
+        self.time_emb_proj = None
 
         self.norm2 = torch.nn.GroupNorm(num_groups=groups_out, num_channels=out_channels, eps=eps, affine=True)
 
@@ -2212,21 +2245,23 @@ class ResnetBlock2D(nn.Module):
 
         assert kernel != "fir" and kernel != "sde_vp"
         if self.up: # False
-            if kernel == "fir":
-                fir_kernel = (1, 3, 3, 1)
-                self.upsample = lambda x: upsample_2d(x, kernel=fir_kernel)
-            elif kernel == "sde_vp":
-                self.upsample = partial(F.interpolate, scale_factor=2.0, mode="nearest")
-            else:
-                self.upsample = Upsample2D(in_channels, use_conv=False)
+            # if kernel == "fir":
+            #     fir_kernel = (1, 3, 3, 1)
+            #     self.upsample = lambda x: upsample_2d(x, kernel=fir_kernel)
+            # elif kernel == "sde_vp":
+            #     self.upsample = partial(F.interpolate, scale_factor=2.0, mode="nearest")
+            # else:
+            #     self.upsample = Upsample2D(in_channels, use_conv=False)
+            self.upsample = Upsample2D(in_channels, use_conv=False)
         elif self.down: # False
-            if kernel == "fir":
-                fir_kernel = (1, 3, 3, 1)
-                self.downsample = lambda x: downsample_2d(x, kernel=fir_kernel)
-            elif kernel == "sde_vp":
-                self.downsample = partial(F.avg_pool2d, kernel_size=2, stride=2)
-            else:
-                self.downsample = Downsample2D(in_channels, use_conv=False, padding=1, name="op")
+            # if kernel == "fir":
+            #     fir_kernel = (1, 3, 3, 1)
+            #     self.downsample = lambda x: downsample_2d(x, kernel=fir_kernel)
+            # elif kernel == "sde_vp":
+            #     self.downsample = partial(F.avg_pool2d, kernel_size=2, stride=2)
+            # else:
+            #     self.downsample = Downsample2D(in_channels, use_conv=False, padding=1, name="op")
+            self.downsample = Downsample2D(in_channels, use_conv=False, padding=1, name="op")
 
         self.use_in_shortcut = self.in_channels != conv_2d_out_channels if use_in_shortcut is None else use_in_shortcut
 
@@ -2272,11 +2307,11 @@ class ResnetBlock2D(nn.Module):
 
         hidden_states = self.conv1(hidden_states)
 
-        assert self.time_emb_proj == None
-        if self.time_emb_proj is not None: # False
-            if not self.skip_time_act:
-                temb = self.nonlinearity(temb)
-            temb = self.time_emb_proj(temb)[:, :, None, None]
+        # assert self.time_emb_proj == None
+        # if self.time_emb_proj is not None: # False
+        #     if not self.skip_time_act:
+        #         temb = self.nonlinearity(temb)
+        #     temb = self.time_emb_proj(temb)[:, :, None, None]
 
         # self.time_embedding_norm -- 'default'
         assert self.time_embedding_norm == 'default'
@@ -2285,16 +2320,16 @@ class ResnetBlock2D(nn.Module):
             if temb is not None:
                 hidden_states = hidden_states + temb
             hidden_states = self.norm2(hidden_states)
-        elif self.time_embedding_norm == "scale_shift":
-            if temb is None:
-                raise ValueError(
-                    f" `temb` should not be None when `time_embedding_norm` is {self.time_embedding_norm}"
-                )
-            time_scale, time_shift = torch.chunk(temb, 2, dim=1)
-            hidden_states = self.norm2(hidden_states)
-            hidden_states = hidden_states * (1 + time_scale) + time_shift
-        else:
-            hidden_states = self.norm2(hidden_states)
+        # elif self.time_embedding_norm == "scale_shift":
+        #     if temb is None:
+        #         raise ValueError(
+        #             f" `temb` should not be None when `time_embedding_norm` is {self.time_embedding_norm}"
+        #         )
+        #     time_scale, time_shift = torch.chunk(temb, 2, dim=1)
+        #     hidden_states = self.norm2(hidden_states)
+        #     hidden_states = hidden_states * (1 + time_scale) + time_shift
+        # else:
+        #     hidden_states = self.norm2(hidden_states)
 
         hidden_states = self.nonlinearity(hidden_states)
 
@@ -2372,7 +2407,7 @@ class TemporalResnetBlock(nn.Module):
             )
         # pdb.set_trace()
 
-    def forward(self, input_tensor: torch.Tensor, temb: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_tensor: torch.Tensor, temb: torch.Tensor):
         hidden_states = input_tensor
 
         hidden_states = self.norm1(hidden_states)
@@ -2474,9 +2509,7 @@ class SpatioTemporalResBlock(nn.Module):
 # !!! -------------------------------
 class AlphaBlender(nn.Module):
     strategies = ["learned", "fixed", "learned_with_images"]
-
-    def __init__(
-        self,
+    def __init__(self,
         alpha: float,
         merge_strategy: str = "learned_with_images",
         switch_spatial_to_temporal_mix: bool = False,
@@ -2486,51 +2519,53 @@ class AlphaBlender(nn.Module):
         # merge_strategy = 'learned'
         # switch_spatial_to_temporal_mix = True
 
-        assert merge_strategy == "learned"
-        assert switch_spatial_to_temporal_mix == True
+        # assert merge_strategy == "learned"
+        # assert switch_spatial_to_temporal_mix == True
 
-        self.merge_strategy = merge_strategy
-        self.switch_spatial_to_temporal_mix = switch_spatial_to_temporal_mix  # For TemporalVAE
+        # self.merge_strategy = merge_strategy
+        # self.switch_spatial_to_temporal_mix = switch_spatial_to_temporal_mix  # For TemporalVAE
 
-        if merge_strategy not in self.strategies:
-            raise ValueError(f"merge_strategy needs to be in {self.strategies}")
+        # if merge_strategy not in self.strategies:
+        #     raise ValueError(f"merge_strategy needs to be in {self.strategies}")
 
-        if self.merge_strategy == "fixed":
-            self.register_buffer("mix_factor", torch.Tensor([alpha]))
-        elif self.merge_strategy == "learned" or self.merge_strategy == "learned_with_images":
-            self.register_parameter("mix_factor", torch.nn.Parameter(torch.Tensor([alpha])))
-        else:
-            raise ValueError(f"Unknown merge strategy {self.merge_strategy}")
+        # if self.merge_strategy == "fixed":
+        #     self.register_buffer("mix_factor", torch.Tensor([alpha]))
+        # elif self.merge_strategy == "learned" or self.merge_strategy == "learned_with_images":
+        #     self.register_parameter("mix_factor", torch.nn.Parameter(torch.Tensor([alpha])))
+        # else:
+        #     raise ValueError(f"Unknown merge strategy {self.merge_strategy}")
+        self.register_parameter("mix_factor", torch.nn.Parameter(torch.Tensor([alpha])))
 
     def get_alpha(self, image_only_indicator: torch.Tensor, ndims: int) -> torch.Tensor:
-        if self.merge_strategy == "fixed":
-            alpha = self.mix_factor
+        # if self.merge_strategy == "fixed":
+        #     alpha = self.mix_factor
 
-        elif self.merge_strategy == "learned":
-            alpha = torch.sigmoid(self.mix_factor)
+        # elif self.merge_strategy == "learned":
+        #     alpha = torch.sigmoid(self.mix_factor)
 
-        elif self.merge_strategy == "learned_with_images":
-            if image_only_indicator is None:
-                raise ValueError("Please provide image_only_indicator to use learned_with_images merge strategy")
+        # elif self.merge_strategy == "learned_with_images":
+        #     if image_only_indicator is None:
+        #         raise ValueError("Please provide image_only_indicator to use learned_with_images merge strategy")
 
-            alpha = torch.where(
-                image_only_indicator.bool(),
-                torch.ones(1, 1, device=image_only_indicator.device),
-                torch.sigmoid(self.mix_factor)[..., None],
-            )
+        #     alpha = torch.where(
+        #         image_only_indicator.bool(),
+        #         torch.ones(1, 1, device=image_only_indicator.device),
+        #         torch.sigmoid(self.mix_factor)[..., None],
+        #     )
 
-            # (batch, channel, frames, height, width)
-            if ndims == 5:
-                alpha = alpha[:, None, :, None, None]
-            # (batch*frames, height*width, channels)
-            elif ndims == 3:
-                alpha = alpha.reshape(-1)[:, None, None]
-            else:
-                raise ValueError(f"Unexpected ndims {ndims}. Dimensions should be 3 or 5")
+        #     # (batch, channel, frames, height, width)
+        #     if ndims == 5:
+        #         alpha = alpha[:, None, :, None, None]
+        #     # (batch*frames, height*width, channels)
+        #     elif ndims == 3:
+        #         alpha = alpha.reshape(-1)[:, None, None]
+        #     else:
+        #         raise ValueError(f"Unexpected ndims {ndims}. Dimensions should be 3 or 5")
 
-        else:
-            raise NotImplementedError
+        # else:
+        #     raise NotImplementedError
 
+        alpha = torch.sigmoid(self.mix_factor)
         return alpha
 
     def forward(self,
@@ -2541,8 +2576,9 @@ class AlphaBlender(nn.Module):
         alpha = self.get_alpha(image_only_indicator, x_spatial.ndim)
         alpha = alpha.to(x_spatial.dtype)
 
-        if self.switch_spatial_to_temporal_mix:
-            alpha = 1.0 - alpha
+        # if self.switch_spatial_to_temporal_mix:
+        #     alpha = 1.0 - alpha
+        alpha = 1.0 - alpha
 
         x = alpha * x_spatial + (1.0 - alpha) * x_temporal
         return x
@@ -2566,16 +2602,19 @@ class AttnProcessor2_0:
         **kwargs,
     ) -> torch.Tensor:
         if len(args) > 0 or kwargs.get("scale", None) is not None:
+            pdb.set_trace()
             deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
             deprecate("scale", "1.0.0", deprecation_message)
 
         residual = hidden_states
         if attn.spatial_norm is not None:
+            pdb.set_trace()
             hidden_states = attn.spatial_norm(hidden_states, temb)
 
         input_ndim = hidden_states.ndim
 
         if input_ndim == 4:
+            # ==> pdb.set_trace()
             batch_size, channel, height, width = hidden_states.shape
             hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
@@ -2584,12 +2623,15 @@ class AttnProcessor2_0:
         )
 
         if attention_mask is not None:
+            # pdb.set_trace()
+
             attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
             # scaled_dot_product_attention expects attention_mask shape to be
             # (batch, heads, source_length, target_length)
             attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
 
         if attn.group_norm is not None:
+            # ==> pdb.set_trace()
             hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
         query = attn.to_q(hidden_states)
@@ -2611,8 +2653,10 @@ class AttnProcessor2_0:
         value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
 
         if attn.norm_q is not None:
+            pdb.set_trace()
             query = attn.norm_q(query)
         if attn.norm_k is not None:
+            pdb.set_trace()
             key = attn.norm_k(key)
 
         # the output of sdp = (batch, num_heads, seq_len, head_dim)
@@ -2630,11 +2674,15 @@ class AttnProcessor2_0:
         hidden_states = attn.to_out[1](hidden_states)
 
         if input_ndim == 4:
+            # ==> pdb.set_trace()
             hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
         if attn.residual_connection:
             hidden_states = hidden_states + residual
+        else:
+            pdb.set_trace()
 
+        assert attn.rescale_output_factor == 1.0
         hidden_states = hidden_states / attn.rescale_output_factor
 
         return hidden_states
