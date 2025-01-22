@@ -230,6 +230,7 @@ class Attention(nn.Module):
             processor = (
                 AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
             )
+        pdb.set_trace()
         self.set_processor(processor)
 
     def set_use_memory_efficient_attention_xformers(
@@ -245,6 +246,8 @@ class Attention(nn.Module):
                 The attention operation to use. Defaults to `None` which uses the default attention operation from
                 `xformers`.
         """
+        pdb.set_trace()
+
         is_custom_diffusion = hasattr(self, "processor") and isinstance(
             self.processor,
             (CustomDiffusionAttnProcessor, CustomDiffusionXFormersAttnProcessor, CustomDiffusionAttnProcessor2_0),
@@ -347,6 +350,8 @@ class Attention(nn.Module):
             slice_size (`int`):
                 The slice size for attention computation.
         """
+        pdb.set_trace()
+
         if slice_size is not None and slice_size > self.sliceable_head_dim:
             raise ValueError(f"slice_size {slice_size} has to be smaller or equal to {self.sliceable_head_dim}.")
 
@@ -370,6 +375,8 @@ class Attention(nn.Module):
     def set_processor(self, processor: "AttnProcessor") -> None:
         # if current processor is in `self._modules` and if passed `processor` is not, we need to
         # pop `processor` from `self._modules`
+        # ==> pdb.set_trace()
+
         if (
             hasattr(self, "processor")
             and isinstance(self.processor, torch.nn.Module)
@@ -381,6 +388,8 @@ class Attention(nn.Module):
         self.processor = processor
 
     def get_processor(self, return_deprecated_lora: bool = False) -> "AttentionProcessor":
+        pdb.set_trace()
+
         if not return_deprecated_lora:
             return self.processor
 
@@ -390,7 +399,14 @@ class Attention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         **cross_attention_kwargs,
     ):
+        # encoder_hidden_states = None
+        # attention_mask = None
+        # cross_attention_kwargs = {'temb': None}
+
         attn_parameters = set(inspect.signature(self.processor.__call__).parameters.keys())
+        # attn_parameters --
+        # {'kwargs', 'temb', 'encoder_hidden_states', 'args', 'hidden_states', 'attention_mask', 'attn'}
+
         quiet_attn_parameters = {"ip_adapter_masks"}
         unused_kwargs = [
             k for k, _ in cross_attention_kwargs.items() if k not in attn_parameters and k not in quiet_attn_parameters
@@ -401,8 +417,7 @@ class Attention(nn.Module):
             )
         cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
 
-        return self.processor(
-            self,
+        return self.processor(self,
             hidden_states,
             encoder_hidden_states=encoder_hidden_states,
             attention_mask=attention_mask,
@@ -417,6 +432,8 @@ class Attention(nn.Module):
         return tensor
 
     def head_to_batch_dim(self, tensor: torch.Tensor, out_dim: int = 3) -> torch.Tensor:
+        pdb.set_trace()
+
         head_size = self.heads
         if tensor.ndim == 3:
             batch_size, seq_len, dim = tensor.shape
@@ -429,6 +446,7 @@ class Attention(nn.Module):
         if out_dim == 3:
             tensor = tensor.reshape(batch_size * head_size, seq_len * extra_dim, dim // head_size)
 
+        pdb.set_trace()
         return tensor
 
     def get_attention_scores(
@@ -436,15 +454,9 @@ class Attention(nn.Module):
     ) -> torch.Tensor:
         r"""
         Compute the attention scores.
-
-        Args:
-            query (`torch.Tensor`): The query tensor.
-            key (`torch.Tensor`): The key tensor.
-            attention_mask (`torch.Tensor`, *optional*): The attention mask to use. If `None`, no mask is applied.
-
-        Returns:
-            `torch.Tensor`: The attention probabilities/scores.
         """
+        pdb.set_trace()
+
         dtype = query.dtype
         if self.upcast_attention:
             query = query.float()
@@ -483,20 +495,8 @@ class Attention(nn.Module):
     ) -> torch.Tensor:
         r"""
         Prepare the attention mask for the attention computation.
-
-        Args:
-            attention_mask (`torch.Tensor`):
-                The attention mask to prepare.
-            target_length (`int`):
-                The target length of the attention mask. This is the length of the attention mask after padding.
-            batch_size (`int`):
-                The batch size, which is used to repeat the attention mask.
-            out_dim (`int`, *optional*, defaults to `3`):
-                The output dimension of the attention mask. Can be either `3` or `4`.
-
-        Returns:
-            `torch.Tensor`: The prepared attention mask.
         """
+        assert attention_mask is None
         head_size = self.heads
         if attention_mask is None:
             return attention_mask
@@ -526,6 +526,8 @@ class Attention(nn.Module):
         return attention_mask
 
     def norm_encoder_hidden_states(self, encoder_hidden_states: torch.Tensor) -> torch.Tensor:
+        pdb.set_trace()
+
         assert self.norm_cross is not None, "self.norm_cross must be defined to call self.norm_encoder_hidden_states"
 
         if isinstance(self.norm_cross, nn.LayerNorm):
@@ -546,6 +548,8 @@ class Attention(nn.Module):
 
     @torch.no_grad()
     def fuse_projections(self, fuse=True):
+        pdb.set_trace()
+
         device = self.to_q.weight.data.device
         dtype = self.to_q.weight.data.dtype
 
@@ -802,8 +806,7 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
     _supports_gradient_checkpointing = True
 
     @register_to_config
-    def __init__(
-        self,
+    def __init__(self,
         in_channels: int = 3,
         out_channels: int = 3,
         down_block_types = ['DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D'],
@@ -849,7 +852,7 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
             else self.config.sample_size
         ) # 768
         # self.config.block_out_channels -- [128, 256, 512, 512]
-        self.tile_latent_min_size = int(sample_size / (2 ** (len(block_out_channels) - 1)))
+        self.tile_latent_min_size = int(sample_size / (2 ** (len(block_out_channels) - 1))) # 96
         self.tile_overlap_factor = 0.25
         # pdb.set_trace()
 
@@ -857,39 +860,39 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
         if isinstance(module, (Encoder, TemporalDecoder)):
             module.gradient_checkpointing = value
 
-    @property
-    # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.attn_processors
-    def attn_processors(self) -> Dict[str, AttentionProcessor]:
-        r"""
-        Returns:
-            `dict` of attention processors: A dictionary containing all attention processors used in the model with
-            indexed by its weight name.
-        """
-        # set recursively
-        processors = {}
+    # @property
+    # # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.attn_processors
+    # def attn_processors(self) -> Dict[str, AttentionProcessor]:
+    #     r"""
+    #     Returns:
+    #         `dict` of attention processors: A dictionary containing all attention processors used in the model with
+    #         indexed by its weight name.
+    #     """
+    #     # set recursively
+    #     processors = {}
 
-        def fn_recursive_add_processors(name: str, module: torch.nn.Module, processors: Dict[str, AttentionProcessor]):
-            if hasattr(module, "get_processor"):
-                processors[f"{name}.processor"] = module.get_processor()
+    #     def fn_recursive_add_processors(name: str, module: torch.nn.Module, processors: Dict[str, AttentionProcessor]):
+    #         if hasattr(module, "get_processor"):
+    #             processors[f"{name}.processor"] = module.get_processor()
 
-            for sub_name, child in module.named_children():
-                fn_recursive_add_processors(f"{name}.{sub_name}", child, processors)
+    #         for sub_name, child in module.named_children():
+    #             fn_recursive_add_processors(f"{name}.{sub_name}", child, processors)
 
-            return processors
+    #         return processors
 
-        for name, module in self.named_children():
-            fn_recursive_add_processors(name, module, processors)
+    #     for name, module in self.named_children():
+    #         fn_recursive_add_processors(name, module, processors)
 
-        pdb.set_trace()
-        return processors
+    #     pdb.set_trace()
+    #     return processors
 
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.set_attn_processor
     def set_attn_processor(self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]]):
         r"""
         Sets the attention processor to use to compute attention.
-
-
         """
+        pdb.set_trace()
+
         count = len(self.attn_processors.keys())
 
         if isinstance(processor, dict) and len(processor) != count:
@@ -922,6 +925,7 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
                 f"Cannot call `set_default_attn_processor` when attention processors are of type {next(iter(self.attn_processors.values()))}"
             )
 
+        pdb.set_trace()
         self.set_attn_processor(processor)
 
     @apply_forward_hook
@@ -942,16 +946,13 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
         return AutoencoderKLOutput(latent_dist=posterior)
 
     @apply_forward_hook
-    def decode(
-        self,
+    def decode(self,
         z: torch.Tensor,
         num_frames: int,
         return_dict: bool = True,
     ):
         """
         Decode a batch of images.
-
-
         """
         # num_frames = 4
         # return_dict = True
@@ -968,8 +969,7 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
 
         return DecoderOutput(sample=decoded)
 
-    def forward(
-        self,
+    def forward(self,
         sample: torch.Tensor,
         sample_posterior: bool = False,
         return_dict: bool = True,
@@ -977,12 +977,7 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
         num_frames: int = 1,
     ) -> Union[DecoderOutput, torch.Tensor]:
         r"""
-        Args:
-            sample (`torch.Tensor`): Input sample.
-            sample_posterior (`bool`, *optional*, defaults to `False`):
-                Whether to sample from the posterior.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`DecoderOutput`] instead of a plain tuple.
+        useless ...
         """
         x = sample
         posterior = self.encode(x).latent_dist
@@ -998,26 +993,34 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
         pdb.set_trace()
         return DecoderOutput(sample=dec)
 
-# !!! ---------------------------------
+# once !!! ---------------------------------
 class UNetMidBlock2D(nn.Module):
     """
-    A 2D UNet mid-block [`UNetMidBlock2D`] with multiple residual blocks and optional attention blocks.
+            in_channels=block_out_channels[-1],
+            resnet_eps=1e-6,
+            resnet_act_fn=act_fn,
+            output_scale_factor=1,
+            resnet_time_scale_shift="default",
+            attention_head_dim=block_out_channels[-1],
+            resnet_groups=norm_num_groups,
+            temb_channels=None,
+            add_attention=mid_block_add_attention,    
     """
-    def __init__(
-        self,
-        in_channels: int,
-        temb_channels: int,
-        dropout: float = 0.0,
-        num_layers: int = 1,
+    def __init__(self,
+        in_channels = 512,
+        temb_channels = None,
         resnet_eps: float = 1e-6,
         resnet_time_scale_shift: str = "default",  # default, spatial
-        resnet_act_fn: str = "swish",
+        resnet_act_fn: str = "silu",
         resnet_groups: int = 32,
-        attn_groups: Optional[int] = None,
-        resnet_pre_norm: bool = True,
         add_attention: bool = True,
-        attention_head_dim: int = 1,
+        attention_head_dim: int = 512,
         output_scale_factor: float = 1.0,
+
+        attn_groups: Optional[int] = None,
+        dropout: float = 0.0,
+        num_layers: int = 1,
+        resnet_pre_norm: bool = True,
     ):
         super().__init__()
         # in_channels = 512
@@ -1035,14 +1038,17 @@ class UNetMidBlock2D(nn.Module):
         # output_scale_factor = 1
         assert num_layers == 1
         assert resnet_time_scale_shift == 'default'
+        assert resnet_act_fn == 'silu'
 
         resnet_groups = resnet_groups if resnet_groups is not None else min(in_channels // 4, 32)
         self.add_attention = add_attention
 
-        if attn_groups is None:
-            attn_groups = resnet_groups if resnet_time_scale_shift == "default" else None
+        # if attn_groups is None:
+        #     attn_groups = resnet_groups # if resnet_time_scale_shift == "default" else None
+        attn_groups = resnet_groups
 
         # there is always at least one resnet
+        assert resnet_time_scale_shift == "default"
         if resnet_time_scale_shift == "spatial": # False
             resnets = [
                 ResnetBlockCondNorm2D(
@@ -1058,6 +1064,8 @@ class UNetMidBlock2D(nn.Module):
                 )
             ]
         else:
+            assert resnet_pre_norm == True
+            assert temb_channels == None
             resnets = [
                 ResnetBlock2D(
                     in_channels=in_channels,
@@ -1075,13 +1083,16 @@ class UNetMidBlock2D(nn.Module):
         attentions = []
 
         if attention_head_dim is None:
+            pdb.set_trace()
             logger.warning(
                 f"It is not recommend to pass `attention_head_dim=None`. Defaulting `attention_head_dim` to `in_channels`: {in_channels}."
             )
             attention_head_dim = in_channels
 
+        assert num_layers == 1
         for _ in range(num_layers):
-            if self.add_attention:
+            assert self.add_attention == True
+            if self.add_attention: # True
                 attentions.append(
                     Attention(
                         in_channels,
@@ -1097,6 +1108,7 @@ class UNetMidBlock2D(nn.Module):
                     )
                 )
             else:
+                pdb.set_trace()
                 attentions.append(None)
 
             if resnet_time_scale_shift == "spatial": # False
