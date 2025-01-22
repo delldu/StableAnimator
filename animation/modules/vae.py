@@ -32,7 +32,6 @@ from dataclasses import dataclass, fields, is_dataclass
 from diffusers.utils.torch_utils import randn_tensor
 
 from diffusers.utils import deprecate, is_torch_version, logging
-# from diffusers.models.attention_processor import Attention
 
 from diffusers.models.activations import get_activation
 from diffusers.utils.import_utils import is_peft_available, is_torch_available, is_transformers_available
@@ -47,41 +46,75 @@ import todos
 # ------------------------------
 class Attention(nn.Module):
     r"""
-    A cross attention layer.
-    Parameters:
+        in_channels,
+        heads=in_channels // attention_head_dim,
+        dim_head=attention_head_dim,
+        rescale_output_factor=output_scale_factor,
+        eps=resnet_eps,
+        norm_num_groups=attn_groups,
+        spatial_norm_dim=temb_channels if resnet_time_scale_shift == "spatial" else None,
+        residual_connection=True,
+        bias=True,
+        upcast_softmax=True,
+        -----------------------------------------------------------
+        query_dim=in_channels,
+        heads=in_channels // attention_head_dim,
+        dim_head=attention_head_dim,
+        eps=1e-6,
+        upcast_attention=upcast_attention,
+        norm_num_groups=32,
+        bias=True,
+        residual_connection=True,
     """
     def __init__(self,
         query_dim: int,
-        cross_attention_dim: Optional[int] = None,
         heads: int = 8,
-        kv_heads: Optional[int] = None,
         dim_head: int = 64,
-        dropout: float = 0.0,
-        bias: bool = False,
+        bias: bool = True,
         upcast_attention: bool = False,
         upcast_softmax: bool = False,
+        norm_num_groups: Optional[int] = None,
+        spatial_norm_dim: Optional[int] = None,
+        eps: float = 1e-6,
+        rescale_output_factor: float = 1.0,
+        residual_connection: bool = True,
+
         cross_attention_norm: Optional[str] = None,
         cross_attention_norm_num_groups: int = 32,
         qk_norm: Optional[str] = None,
         added_kv_proj_dim: Optional[int] = None,
         added_proj_bias: Optional[bool] = True,
-        norm_num_groups: Optional[int] = None,
-        spatial_norm_dim: Optional[int] = None,
         out_bias: bool = True,
         scale_qk: bool = True,
         only_cross_attention: bool = False,
-        eps: float = 1e-5,
-        rescale_output_factor: float = 1.0,
-        residual_connection: bool = False,
+
         processor: Optional["AttnProcessor"] = None,
         out_dim: int = None,
         context_pre_only=None,
         pre_only=False,
+        cross_attention_dim: Optional[int] = None,
+        kv_heads: Optional[int] = None,
+        dropout: float = 0.0,
     ):
         super().__init__()
 
         # To prevent circular import.
         # from .normalization import FP32LayerNorm, RMSNorm
+        assert cross_attention_norm == None
+        assert cross_attention_norm_num_groups == 32
+        assert qk_norm == None
+        assert added_kv_proj_dim == None
+        assert added_proj_bias == True
+        assert out_bias == True
+        assert scale_qk == True
+        assert only_cross_attention == False
+        assert processor == None
+        assert out_dim == None
+        assert context_pre_only == None
+        assert pre_only == False
+        assert cross_attention_dim == None
+        assert kv_heads == None
+        assert dropout == 0.0
 
         self.inner_dim = out_dim if out_dim is not None else dim_head * heads
         self.inner_kv_dim = self.inner_dim if kv_heads is None else dim_head * kv_heads
@@ -92,7 +125,7 @@ class Attention(nn.Module):
         self.upcast_attention = upcast_attention
         self.upcast_softmax = upcast_softmax
         self.rescale_output_factor = rescale_output_factor
-        self.residual_connection = residual_connection
+        self.residual_connection = residual_connection # !!!
         self.dropout = dropout
         self.fused_projections = False
         self.out_dim = out_dim if out_dim is not None else query_dim
@@ -116,16 +149,18 @@ class Attention(nn.Module):
                 "`only_cross_attention` can only be set to True if `added_kv_proj_dim` is not None. Make sure to set either `only_cross_attention=False` or define `added_kv_proj_dim`."
             )
 
-        if norm_num_groups is not None:
+        if norm_num_groups is not None: # True | False
             self.group_norm = nn.GroupNorm(num_channels=query_dim, num_groups=norm_num_groups, eps=eps, affine=True)
         else:
             self.group_norm = None
 
+        assert spatial_norm_dim == None
         if spatial_norm_dim is not None:
             self.spatial_norm = SpatialNorm(f_channels=query_dim, zq_channels=spatial_norm_dim)
         else:
             self.spatial_norm = None
 
+        assert qk_norm == None
         if qk_norm is None:
             self.norm_q = None
             self.norm_k = None
@@ -145,6 +180,7 @@ class Attention(nn.Module):
         else:
             raise ValueError(f"unknown qk_norm: {qk_norm}. Should be None or 'layer_norm'")
 
+        assert cross_attention_norm == None
         if cross_attention_norm is None:
             self.norm_cross = None
         elif cross_attention_norm == "layer_norm":
@@ -180,20 +216,25 @@ class Attention(nn.Module):
 
         self.added_proj_bias = added_proj_bias
         if self.added_kv_proj_dim is not None:
+            pdb.set_trace()
             self.add_k_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
             self.add_v_proj = nn.Linear(added_kv_proj_dim, self.inner_kv_dim, bias=added_proj_bias)
             if self.context_pre_only is not None:
                 self.add_q_proj = nn.Linear(added_kv_proj_dim, self.inner_dim, bias=added_proj_bias)
 
-        if not self.pre_only:
+        if not self.pre_only: # True ?
             self.to_out = nn.ModuleList([])
             self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=out_bias))
             self.to_out.append(nn.Dropout(dropout))
+        else:
+            pdb.set_trace()
 
         if self.context_pre_only is not None and not self.context_pre_only:
+            pdb.set_trace()
             self.to_add_out = nn.Linear(self.inner_dim, self.out_dim, bias=out_bias)
 
         if qk_norm is not None and added_kv_proj_dim is not None:
+            pdb.set_trace()
             if qk_norm == "fp32_layer_norm":
                 self.norm_added_q = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
                 self.norm_added_k = FP32LayerNorm(dim_head, elementwise_affine=False, bias=False, eps=eps)
@@ -209,6 +250,8 @@ class Attention(nn.Module):
         # torch.nn.functional.scaled_dot_product_attention for native Flash/memory_efficient_attention
         # but only if it has the default `scale` argument. TODO remove scale_qk check when we move to torch 2.1
         if processor is None:
+            assert hasattr(F, "scaled_dot_product_attention") and self.scale_qk
+
             processor = (
                 AttnProcessor2_0() if hasattr(F, "scaled_dot_product_attention") and self.scale_qk else AttnProcessor()
             )
@@ -263,6 +306,8 @@ class Attention(nn.Module):
         )
 
         if use_memory_efficient_attention_xformers:
+            pdb.set_trace()
+
             if is_added_kv_processor and is_custom_diffusion:
                 raise NotImplementedError(
                     f"Memory efficient attention is currently not supported for custom diffusion for attention processor type {self.processor}"
@@ -382,6 +427,7 @@ class Attention(nn.Module):
             and isinstance(self.processor, torch.nn.Module)
             and not isinstance(processor, torch.nn.Module)
         ):
+            pdb.set_trace()
             logger.info(f"You are removing possibly trained weights of {self.processor} with {processor}")
             self._modules.pop("processor")
 
@@ -412,10 +458,12 @@ class Attention(nn.Module):
             k for k, _ in cross_attention_kwargs.items() if k not in attn_parameters and k not in quiet_attn_parameters
         ]
         if len(unused_kwargs) > 0:
+            pdb.set_trace()
             logger.warning(
                 f"cross_attention_kwargs {unused_kwargs} are not expected by {self.processor.__class__.__name__} and will be ignored."
             )
         cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
+        # assert cross_attention_kwargs == {}
 
         return self.processor(self,
             hidden_states,
@@ -2508,8 +2556,7 @@ class AttnProcessor2_0:
         if not hasattr(F, "scaled_dot_product_attention"):
             raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
 
-    def __call__(
-        self,
+    def __call__(self,
         attn: Attention,
         hidden_states: torch.Tensor,
         encoder_hidden_states: Optional[torch.Tensor] = None,
