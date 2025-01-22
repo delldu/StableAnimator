@@ -39,8 +39,7 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         #   (id_to_v): Linear(in_features=1024, out_features=320, bias=False)
         # )
 
-    def __call__(
-            self,
+    def __call__(self,
             attn,
             hidden_states,
             encoder_hidden_states=None,

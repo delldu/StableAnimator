@@ -23,7 +23,7 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
-from animation.modules.attention_processor import AnimationAttnProcessor
+# from animation.modules.attention_processor import AnimationAttnProcessor
 
 import pdb
 import todos

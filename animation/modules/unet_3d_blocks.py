@@ -85,7 +85,8 @@ def get_down_block(
     # transformer_layers_per_block = 1
     # temporal_transformer_layers_per_block = 1
     # dropout = 0.0
-
+    print("down_block_type: ", down_block_type)
+    
     if down_block_type == "DownBlock3D":
         return DownBlock3D(
             num_layers=num_layers,
@@ -176,7 +177,7 @@ def get_up_block(
     dropout: float = 0.0,
 ):
     # pdb.set_trace()
-
+    print("up_block_type: ", up_block_type)
     if up_block_type == "UpBlock3D":
         return UpBlock3D(
             num_layers=num_layers,
@@ -247,8 +248,7 @@ def get_up_block(
 
 
 class UNetMidBlockSpatioTemporal(nn.Module):
-    def __init__(
-        self,
+    def __init__(self,
         in_channels: int,
         temb_channels: int,
         num_layers: int = 1,

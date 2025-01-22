@@ -54,53 +54,23 @@ class Attention(nn.Module):
         norm_num_groups: Optional[int] = None,
         spatial_norm_dim: Optional[int] = None,
         eps: float = 1e-6,
-        rescale_output_factor: float = 1.0,
         residual_connection: bool = True,
 
-        cross_attention_norm: Optional[str] = None,
-        cross_attention_norm_num_groups: int = 32,
-        qk_norm: Optional[str] = None,
-        added_kv_proj_dim: Optional[int] = None,
-        added_proj_bias: Optional[bool] = True,
-        out_bias: bool = True,
-        scale_qk: bool = True,
-
         processor: Optional["AttnProcessor"] = None,
-        out_dim: int = None,
-        kv_heads: Optional[int] = None,
     ):
         super().__init__()
 
         # To prevent circular import.
         # from .normalization import FP32LayerNorm, RMSNorm
-        assert cross_attention_norm == None
-        assert cross_attention_norm_num_groups == 32
-        assert qk_norm == None
-        assert added_kv_proj_dim == None
-        assert added_proj_bias == True
-        assert out_bias == True
-        assert scale_qk == True
         assert processor == None
-        assert out_dim == None
-        assert kv_heads == None
 
-        self.inner_dim = out_dim if out_dim is not None else dim_head * heads
-        self.inner_kv_dim = self.inner_dim if kv_heads is None else dim_head * kv_heads
-        # self.query_dim = query_dim
-        # self.use_bias = bias
-        self.is_cross_attention = False
+        self.heads = heads
+        self.inner_dim = dim_head * heads
         self.cross_attention_dim = query_dim
         self.upcast_softmax = upcast_softmax
-        self.rescale_output_factor = rescale_output_factor
         self.residual_connection = residual_connection # !!!
-        self.fused_projections = False
-        self.out_dim = out_dim if out_dim is not None else query_dim
-
-        self.scale_qk = scale_qk
-        self.scale = dim_head**-0.5 if self.scale_qk else 1.0
-
-        self.heads = out_dim // dim_head if out_dim is not None else heads
-        self.added_kv_proj_dim = added_kv_proj_dim
+        self.out_dim = query_dim
+        self.scale = dim_head**-0.5
 
         if norm_num_groups is not None: # True | False
             self.group_norm = nn.GroupNorm(num_channels=query_dim, num_groups=norm_num_groups, eps=eps, affine=True)
@@ -116,13 +86,11 @@ class Attention(nn.Module):
         self.to_q = nn.Linear(query_dim, self.inner_dim, bias=bias)
 
         # only relevant for the `AddedKVProcessor` classes
-        self.to_k = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
-        self.to_v = nn.Linear(self.cross_attention_dim, self.inner_kv_dim, bias=bias)
-
-        self.added_proj_bias = added_proj_bias
+        self.to_k = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=bias)
+        self.to_v = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=bias)
 
         self.to_out = nn.ModuleList([])
-        self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=out_bias))
+        self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=True))
         self.to_out.append(nn.Dropout(0.0))
 
         if processor is None:
@@ -145,16 +113,6 @@ class Attention(nn.Module):
         attn_parameters = set(inspect.signature(self.processor.__call__).parameters.keys())
         # attn_parameters --
         # {'kwargs', 'temb', 'encoder_hidden_states', 'args', 'hidden_states', 'attention_mask', 'attn'}
-
-        quiet_attn_parameters = {"ip_adapter_masks"}
-        unused_kwargs = [
-            k for k, _ in cross_attention_kwargs.items() if k not in attn_parameters and k not in quiet_attn_parameters
-        ]
-        if len(unused_kwargs) > 0:
-            pdb.set_trace()
-            logger.warning(
-                f"cross_attention_kwargs {unused_kwargs} are not expected by {self.processor.__class__.__name__} and will be ignored."
-            )
         cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
         # assert cross_attention_kwargs == {}
 
@@ -165,14 +123,6 @@ class Attention(nn.Module):
             **cross_attention_kwargs,
         )
 
-    def batch_to_head_dim(self, tensor: torch.Tensor) -> torch.Tensor:
-        pdb.set_trace()
-
-        head_size = self.heads
-        batch_size, seq_len, dim = tensor.shape
-        tensor = tensor.reshape(batch_size // head_size, head_size, seq_len, dim)
-        tensor = tensor.permute(0, 2, 1, 3).reshape(batch_size // head_size, seq_len, dim * head_size)
-        return tensor
 
 class BaseOutput(OrderedDict):
     def __init_subclass__(cls) -> None:
@@ -288,36 +238,6 @@ class DiagonalGaussianDistribution(object):
         # todos.debug.output_var("sample", x)
         return x
 
-    # def kl(self, other: "DiagonalGaussianDistribution" = None) -> torch.Tensor:
-    #     if self.deterministic:
-    #         return torch.Tensor([0.0])
-    #     else:
-    #         if other is None:
-    #             return 0.5 * torch.sum(
-    #                 torch.pow(self.mean, 2) + self.var - 1.0 - self.logvar,
-    #                 dim=[1, 2, 3],
-    #             )
-    #         else:
-    #             return 0.5 * torch.sum(
-    #                 torch.pow(self.mean - other.mean, 2) / other.var
-    #                 + self.var / other.var
-    #                 - 1.0
-    #                 - self.logvar
-    #                 + other.logvar,
-    #                 dim=[1, 2, 3],
-    #             )
-    #     pdb.set_trace()
-
-    # def nll(self, sample: torch.Tensor, dims: Tuple[int, ...] = [1, 2, 3]) -> torch.Tensor:
-    #     if self.deterministic:
-    #         return torch.Tensor([0.0])
-    #     logtwopi = np.log(2.0 * np.pi)
-    #     return 0.5 * torch.sum(
-    #         logtwopi + self.logvar + torch.pow(sample - self.mean, 2) / self.var,
-    #         dim=dims,
-    #     )
-    #     pdb.set_trace()
-
     def mode(self) -> torch.Tensor:
         return self.mean
 
@@ -378,7 +298,6 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
         # self.config.block_out_channels -- [128, 256, 512, 512]
         self.tile_latent_min_size = int(sample_size / (2 ** (len(block_out_channels) - 1))) # 96
         self.tile_overlap_factor = 0.25
-        # pdb.set_trace()
 
     @apply_forward_hook
     def encode(self, x: torch.Tensor, return_dict: bool = True):
@@ -433,7 +352,6 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
 
         if not return_dict:
             return (dec,)
-        pdb.set_trace()
         return DecoderOutput(sample=dec)
 
 # once !!! ---------------------------------
@@ -496,7 +414,6 @@ class UNetMidBlock2D(nn.Module):
 
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
-        # pdb.set_trace()
 
     def forward(self, hidden_states: torch.Tensor, temb: Optional[torch.Tensor] = None) -> torch.Tensor:
         assert temb == None
@@ -572,7 +489,7 @@ class TemporalDecoder(nn.Module):
         self.conv_norm_out = nn.GroupNorm(num_channels=block_out_channels[0], num_groups=32, eps=1e-6)
 
         self.conv_act = nn.SiLU()
-        self.conv_out = torch.nn.Conv2d(
+        self.conv_out = nn.Conv2d(
             in_channels=block_out_channels[0],
             out_channels=out_channels,
             kernel_size=3,
@@ -581,7 +498,7 @@ class TemporalDecoder(nn.Module):
 
         conv_out_kernel_size = (3, 1, 1)
         padding = [int(k // 2) for k in conv_out_kernel_size] # [1, 0, 0]
-        self.time_conv_out = torch.nn.Conv3d(
+        self.time_conv_out = nn.Conv3d(
             in_channels=out_channels,
             out_channels=out_channels,
             kernel_size=conv_out_kernel_size,
@@ -683,7 +600,6 @@ class Encoder(nn.Module):
         self.conv_out = nn.Conv2d(block_out_channels[-1], conv_out_channels, 3, padding=1)
 
         self.gradient_checkpointing = False
-        # pdb.set_trace()
 
 
     def forward(self, sample: torch.Tensor) -> torch.Tensor:
@@ -865,7 +781,6 @@ class DownEncoderBlock2D(nn.Module):
             )
         else:
             self.downsamplers = None
-        # pdb.set_trace()
 
     def forward(self, hidden_states):
         for resnet in self.resnets:
@@ -979,35 +894,18 @@ class ResnetBlock2D(nn.Module):
         non_linearity: str = "silu",
 
         conv_shortcut: bool = False,
-        # groups_out: Optional[int] = None,
-        # skip_time_act: bool = False,
-        # kernel: Optional[torch.Tensor] = None,
-        # use_in_shortcut: Optional[bool] = None,
-        # up: bool = False,
-        # down: bool = False,
-        # conv_shortcut_bias: bool = True,
-        # conv_2d_out_channels: Optional[int] = None,
     ):
         super().__init__()
         assert conv_shortcut == False
-        # assert groups_out == None
-        # assert skip_time_act == False
-        # assert kernel == None
-        # assert use_in_shortcut == None
-        # assert up == False
-        # assert down == False
-        # assert conv_shortcut_bias == True
-        # assert conv_2d_out_channels == None
 
 
         self.in_channels = in_channels
         out_channels = in_channels if out_channels is None else out_channels
         self.out_channels = out_channels
 
-        self.norm1 = torch.nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)
+        self.norm1 = nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.time_emb_proj = None
-        self.norm2 = torch.nn.GroupNorm(num_groups=groups, num_channels=out_channels, eps=eps, affine=True)
+        self.norm2 = nn.GroupNorm(num_groups=groups, num_channels=out_channels, eps=eps, affine=True)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.nonlinearity = get_activation(non_linearity)
         self.use_in_shortcut = self.in_channels != out_channels
@@ -1022,7 +920,6 @@ class ResnetBlock2D(nn.Module):
                 padding=0,
                 bias=True,
             )
-        assert self.time_emb_proj == None
 
     def forward(self, input_tensor, temb):
         hidden_states = input_tensor
@@ -1030,9 +927,9 @@ class ResnetBlock2D(nn.Module):
         hidden_states = self.nonlinearity(hidden_states)
         hidden_states = self.conv1(hidden_states)
 
-        assert temb == None
-        if temb is not None:
-            hidden_states = hidden_states + temb
+        # assert temb == None
+        # if temb is not None:
+        #     hidden_states = hidden_states + temb
         hidden_states = self.norm2(hidden_states)
         hidden_states = self.nonlinearity(hidden_states)
         hidden_states = self.conv2(hidden_states)
@@ -1040,7 +937,6 @@ class ResnetBlock2D(nn.Module):
         # assert self.conv_shortcut == None
         if self.conv_shortcut is not None:
             input_tensor = self.conv_shortcut(input_tensor)
-
 
         output_tensor = (input_tensor + hidden_states)
 
@@ -1066,15 +962,14 @@ class TemporalResnetBlock(nn.Module):
         kernel_size = (3, 1, 1)
         padding = [k // 2 for k in kernel_size]
 
-        self.norm1 = torch.nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=eps, affine=True)
+        self.norm1 = nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=eps, affine=True)
         self.conv1 = nn.Conv3d(in_channels, out_channels,
             kernel_size=kernel_size,
             stride=1,
             padding=padding,
         )
 
-        self.time_emb_proj = None
-        self.norm2 = torch.nn.GroupNorm(num_groups=32, num_channels=out_channels, eps=eps, affine=True)
+        self.norm2 = nn.GroupNorm(num_groups=32, num_channels=out_channels, eps=eps, affine=True)
 
         self.conv2 = nn.Conv3d(out_channels, out_channels,
             kernel_size=kernel_size,
@@ -1102,13 +997,6 @@ class TemporalResnetBlock(nn.Module):
         hidden_states = self.nonlinearity(hidden_states)
         hidden_states = self.conv1(hidden_states)
 
-        assert self.time_emb_proj == None
-        if self.time_emb_proj is not None:
-            temb = self.nonlinearity(temb)
-            temb = self.time_emb_proj(temb)[:, :, :, None, None]
-            temb = temb.permute(0, 2, 1, 3, 4)
-            hidden_states = hidden_states + temb
-
         hidden_states = self.norm2(hidden_states)
         hidden_states = self.nonlinearity(hidden_states)
         hidden_states = self.conv2(hidden_states)
@@ -1128,26 +1016,19 @@ class SpatioTemporalResBlock(nn.Module):
         out_channels  = 512,
         eps = 1e-6,
         temporal_eps = 1e-5,
-        merge_factor = 0.5,
+        merge_factor = 0.0,
     ):
         super().__init__()
-        # in_channels = 512
-        # out_channels = 512
-        # eps = 1e-06
-        # temporal_eps = 1e-05
-        # merge_factor = 0.0
         self.spatial_res_block = ResnetBlock2D(
             in_channels=in_channels,
             out_channels=out_channels,
             eps=eps,
         )
 
-        assert out_channels is not None
-        assert temporal_eps is not None
         self.temporal_res_block = TemporalResnetBlock(
-            in_channels=out_channels if out_channels is not None else in_channels,
-            out_channels=out_channels if out_channels is not None else in_channels,
-            eps=temporal_eps if temporal_eps is not None else eps,
+            in_channels=out_channels,
+            out_channels=out_channels,
+            eps=temporal_eps,
         )
 
         self.time_mixer = AlphaBlender(alpha=merge_factor)
@@ -1187,7 +1068,7 @@ class SpatioTemporalResBlock(nn.Module):
 class AlphaBlender(nn.Module):
     def __init__(self, alpha: float):
         super().__init__()
-        self.register_parameter("mix_factor", torch.nn.Parameter(torch.Tensor([alpha])))
+        self.register_parameter("mix_factor", nn.Parameter(torch.Tensor([alpha])))
 
     def forward(self,
         x_spatial: torch.Tensor,
@@ -1230,8 +1111,6 @@ class AttnProcessor2_0:
         if attention_mask is not None:
             # ==> pdb.set_trace()
             attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-            # scaled_dot_product_attention expects attention_mask shape to be
-            # (batch, heads, source_length, target_length)
             attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
 
         if attn.group_norm is not None:

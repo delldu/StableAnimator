@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-# from diffusers.models.lora import LoRALinearLayer
 from diffusers.utils.import_utils import is_xformers_available
 import pdb
 import todos
@@ -29,8 +28,7 @@ class AnimationAttnProcessor(nn.Module):
         # network_alpha = None
         # lora_scale = 1.0
 
-    def __call__(
-        self,
+    def __call__(self,
         attn,
         hidden_states,
         encoder_hidden_states=None,
