@@ -1091,33 +1091,13 @@ class UNetMidBlock2D(nn.Module):
         # attention_head_dim = 512
         # output_scale_factor = 1
         assert num_layers == 1
-        assert resnet_time_scale_shift == 'default'
         assert resnet_act_fn == 'silu'
 
         resnet_groups = resnet_groups if resnet_groups is not None else min(in_channels // 4, 32)
         self.add_attention = add_attention
 
-        # if attn_groups is None:
-        #     attn_groups = resnet_groups # if resnet_time_scale_shift == "default" else None
         attn_groups = resnet_groups
 
-        # there is always at least one resnet
-        assert resnet_time_scale_shift == "default"
-        # if resnet_time_scale_shift == "spatial": # False
-        #     resnets = [
-        #         ResnetBlockCondNorm2D(
-        #             in_channels=in_channels,
-        #             out_channels=in_channels,
-        #             temb_channels=temb_channels,
-        #             eps=resnet_eps,
-        #             groups=resnet_groups,
-        #             dropout=dropout,
-        #             time_embedding_norm="spatial",
-        #             non_linearity=resnet_act_fn,
-        #             output_scale_factor=output_scale_factor,
-        #         )
-        #     ]
-        # else:
         assert resnet_pre_norm == True
         assert temb_channels == None
         resnets = [
@@ -1128,20 +1108,13 @@ class UNetMidBlock2D(nn.Module):
                 eps=resnet_eps,
                 groups=resnet_groups,
                 dropout=dropout,
-                time_embedding_norm=resnet_time_scale_shift,
+                time_embedding_norm="default",
                 non_linearity=resnet_act_fn,
                 output_scale_factor=output_scale_factor,
                 pre_norm=resnet_pre_norm,
             )
         ]
         attentions = []
-
-        # if attention_head_dim is None:
-        #     pdb.set_trace()
-        #     logger.warning(
-        #         f"It is not recommend to pass `attention_head_dim=None`. Defaulting `attention_head_dim` to `in_channels`: {in_channels}."
-        #     )
-        #     attention_head_dim = in_channels
 
         assert num_layers == 1
         for _ in range(num_layers):
@@ -1155,31 +1128,12 @@ class UNetMidBlock2D(nn.Module):
                         rescale_output_factor=output_scale_factor,
                         eps=resnet_eps,
                         norm_num_groups=attn_groups,
-                        spatial_norm_dim=temb_channels if resnet_time_scale_shift == "spatial" else None,
+                        spatial_norm_dim=None,
                         residual_connection=True,
                         bias=True,
                         upcast_softmax=True,
                     )
                 )
-            # else:
-            #     pdb.set_trace()
-            #     attentions.append(None)
-
-            # if resnet_time_scale_shift == "spatial": # False
-            #     resnets.append(
-            #         ResnetBlockCondNorm2D(
-            #             in_channels=in_channels,
-            #             out_channels=in_channels,
-            #             temb_channels=temb_channels,
-            #             eps=resnet_eps,
-            #             groups=resnet_groups,
-            #             dropout=dropout,
-            #             time_embedding_norm="spatial",
-            #             non_linearity=resnet_act_fn,
-            #             output_scale_factor=output_scale_factor,
-            #         )
-            #     )
-            # else:
             resnets.append(
                 ResnetBlock2D(
                     in_channels=in_channels,
@@ -1188,7 +1142,7 @@ class UNetMidBlock2D(nn.Module):
                     eps=resnet_eps,
                     groups=resnet_groups,
                     dropout=dropout,
-                    time_embedding_norm=resnet_time_scale_shift,
+                    time_embedding_norm="default",
                     non_linearity=resnet_act_fn,
                     output_scale_factor=output_scale_factor,
                     pre_norm=resnet_pre_norm,
@@ -1411,20 +1365,7 @@ class Encoder(nn.Module):
                 resnet_act_fn=act_fn,
                 resnet_groups=norm_num_groups,
                 downsample_padding=0,
-                # resnet_time_scale_shift=resnet_time_scale_shift,
             )
-            # in_channels: int,
-            # out_channels: int,
-            # dropout: float = 0.0,
-            # num_layers: int = 1,
-            # resnet_eps: float = 1e-6,
-            # resnet_time_scale_shift: str = "default",
-            # resnet_act_fn: str = "swish",
-            # resnet_groups: int = 32,
-            # resnet_pre_norm: bool = True,
-            # output_scale_factor: float = 1.0,
-            # add_downsample: bool = True,
-            # downsample_padding: int = 1,
 
             self.down_blocks.append(down_block)
 
@@ -1471,261 +1412,6 @@ class Encoder(nn.Module):
         # todos.debug.output_var("sample2", sample)
         return sample
 
-
-# def get_down_block(
-#     down_block_type: str,
-#     num_layers: int,
-#     in_channels: int,
-#     out_channels: int,
-#     temb_channels: int,
-#     add_downsample: bool,
-#     resnet_eps: float,
-#     resnet_act_fn: str,
-#     transformer_layers_per_block: int = 1,
-#     num_attention_heads: Optional[int] = None,
-#     resnet_groups: Optional[int] = None,
-#     cross_attention_dim: Optional[int] = None,
-#     downsample_padding: Optional[int] = None,
-#     dual_cross_attention: bool = False,
-#     use_linear_projection: bool = False,
-#     only_cross_attention: bool = False,
-#     upcast_attention: bool = False,
-#     resnet_time_scale_shift: str = "default",
-#     attention_type: str = "default",
-#     resnet_skip_time_act: bool = False,
-#     resnet_out_scale_factor: float = 1.0,
-#     cross_attention_norm: Optional[str] = None,
-#     attention_head_dim: Optional[int] = None,
-#     downsample_type: Optional[str] = None,
-#     dropout: float = 0.0,
-# ):
-#     # down_block_type = 'DownEncoderBlock2D'
-#     # num_layers = 2
-#     # in_channels = 128
-#     # out_channels = 128
-#     # temb_channels = None
-#     # add_downsample = True
-#     # resnet_eps = 1e-06
-#     # resnet_act_fn = 'silu'
-#     # transformer_layers_per_block = 1
-#     # num_attention_heads = None
-#     # resnet_groups = 32
-#     # cross_attention_dim = None
-#     # downsample_padding = 0
-#     # dual_cross_attention = False
-#     # use_linear_projection = False
-#     # only_cross_attention = False
-#     # upcast_attention = False
-#     # resnet_time_scale_shift = 'default'
-#     # attention_type = 'default'
-#     # resnet_skip_time_act = False
-#     # resnet_out_scale_factor = 1.0
-#     # cross_attention_norm = None
-#     # attention_head_dim = 128
-#     # downsample_type = None
-#     # dropout = 0.0
-
-#     # return DownEncoderBlock2D(
-#     #     num_layers=num_layers,
-#     #     in_channels=in_channels,
-#     #     out_channels=out_channels,
-#     #     dropout=dropout,
-#     #     add_downsample=add_downsample,
-#     #     resnet_eps=resnet_eps,
-#     #     resnet_act_fn=resnet_act_fn,
-#     #     resnet_groups=resnet_groups,
-#     #     downsample_padding=downsample_padding,
-#     #     resnet_time_scale_shift=resnet_time_scale_shift,
-#     # )
-#     # assert attention_head_dim == 128
-
-#     # If attn head dim is not defined, we default it to the number of heads
-#     if attention_head_dim is None:
-#         logger.warning(
-#             f"It is recommended to provide `attention_head_dim` when calling `get_down_block`. Defaulting `attention_head_dim` to {num_attention_heads}."
-#         )
-#         attention_head_dim = num_attention_heads
-
-
-#     down_block_type = down_block_type[7:] if down_block_type.startswith("UNetRes") else down_block_type
-#     # DownEncoderBlock2D
-#     assert down_block_type == "DownEncoderBlock2D"
-
-#     if down_block_type == "DownBlock2D":
-#         return DownBlock2D(
-#             num_layers=num_layers,
-#             in_channels=in_channels,
-#             out_channels=out_channels,
-#             temb_channels=temb_channels,
-#             dropout=dropout,
-#             add_downsample=add_downsample,
-#             resnet_eps=resnet_eps,
-#             resnet_act_fn=resnet_act_fn,
-#             resnet_groups=resnet_groups,
-#             downsample_padding=downsample_padding,
-#             resnet_time_scale_shift=resnet_time_scale_shift,
-#         )
-#     elif down_block_type == "ResnetDownsampleBlock2D":
-#         return ResnetDownsampleBlock2D(
-#             num_layers=num_layers,
-#             in_channels=in_channels,
-#             out_channels=out_channels,
-#             temb_channels=temb_channels,
-#             dropout=dropout,
-#             add_downsample=add_downsample,
-#             resnet_eps=resnet_eps,
-#             resnet_act_fn=resnet_act_fn,
-#             resnet_groups=resnet_groups,
-#             resnet_time_scale_shift=resnet_time_scale_shift,
-#             skip_time_act=resnet_skip_time_act,
-#             output_scale_factor=resnet_out_scale_factor,
-#         )
-#     elif down_block_type == "AttnDownBlock2D":
-#         if add_downsample is False:
-#             downsample_type = None
-#         else:
-#             downsample_type = downsample_type or "conv"  # default to 'conv'
-#         return AttnDownBlock2D(
-#             num_layers=num_layers,
-#             in_channels=in_channels,
-#             out_channels=out_channels,
-#             temb_channels=temb_channels,
-#             dropout=dropout,
-#             resnet_eps=resnet_eps,
-#             resnet_act_fn=resnet_act_fn,
-#             resnet_groups=resnet_groups,
-#             downsample_padding=downsample_padding,
-#             attention_head_dim=attention_head_dim,
-#             resnet_time_scale_shift=resnet_time_scale_shift,
-#             downsample_type=downsample_type,
-#         )
-#     elif down_block_type == "CrossAttnDownBlock2D":
-#         if cross_attention_dim is None:
-#             raise ValueError("cross_attention_dim must be specified for CrossAttnDownBlock2D")
-#         return CrossAttnDownBlock2D(
-#             num_layers=num_layers,
-#             transformer_layers_per_block=transformer_layers_per_block,
-#             in_channels=in_channels,
-#             out_channels=out_channels,
-#             temb_channels=temb_channels,
-#             dropout=dropout,
-#             add_downsample=add_downsample,
-#             resnet_eps=resnet_eps,
-#             resnet_act_fn=resnet_act_fn,
-#             resnet_groups=resnet_groups,
-#             downsample_padding=downsample_padding,
-#             cross_attention_dim=cross_attention_dim,
-#             num_attention_heads=num_attention_heads,
-#             dual_cross_attention=dual_cross_attention,
-#             use_linear_projection=use_linear_projection,
-#             only_cross_attention=only_cross_attention,
-#             upcast_attention=upcast_attention,
-#             resnet_time_scale_shift=resnet_time_scale_shift,
-#             attention_type=attention_type,
-#         )
-#     elif down_block_type == "SimpleCrossAttnDownBlock2D":
-#         if cross_attention_dim is None:
-#             raise ValueError("cross_attention_dim must be specified for SimpleCrossAttnDownBlock2D")
-#         return SimpleCrossAttnDownBlock2D(
-#             num_layers=num_layers,
-#             in_channels=in_channels,
-#             out_channels=out_channels,
-#             temb_channels=temb_channels,
-#             dropout=dropout,
-#             add_downsample=add_downsample,
-#             resnet_eps=resnet_eps,
-#             resnet_act_fn=resnet_act_fn,
-#             resnet_groups=resnet_groups,
-#             cross_attention_dim=cross_attention_dim,
-#             attention_head_dim=attention_head_dim,
-#             resnet_time_scale_shift=resnet_time_scale_shift,
-#             skip_time_act=resnet_skip_time_act,
-#             output_scale_factor=resnet_out_scale_factor,
-#             only_cross_attention=only_cross_attention,
-#             cross_attention_norm=cross_attention_norm,
-#         )
-#     elif down_block_type == "SkipDownBlock2D":
-#         return SkipDownBlock2D(
-#             num_layers=num_layers,
-#             in_channels=in_channels,
-#             out_channels=out_channels,
-#             temb_channels=temb_channels,
-#             dropout=dropout,
-#             add_downsample=add_downsample,
-#             resnet_eps=resnet_eps,
-#             resnet_act_fn=resnet_act_fn,
-#             downsample_padding=downsample_padding,
-#             resnet_time_scale_shift=resnet_time_scale_shift,
-#         )
-#     elif down_block_type == "AttnSkipDownBlock2D":
-#         return AttnSkipDownBlock2D(
-#             num_layers=num_layers,
-#             in_channels=in_channels,
-#             out_channels=out_channels,
-#             temb_channels=temb_channels,
-#             dropout=dropout,
-#             add_downsample=add_downsample,
-#             resnet_eps=resnet_eps,
-#             resnet_act_fn=resnet_act_fn,
-#             attention_head_dim=attention_head_dim,
-#             resnet_time_scale_shift=resnet_time_scale_shift,
-#         )
-#     elif down_block_type == "DownEncoderBlock2D": # True
-#         return DownEncoderBlock2D(
-#             num_layers=num_layers,
-#             in_channels=in_channels,
-#             out_channels=out_channels,
-#             dropout=dropout,
-#             add_downsample=add_downsample,
-#             resnet_eps=resnet_eps,
-#             resnet_act_fn=resnet_act_fn,
-#             resnet_groups=resnet_groups,
-#             downsample_padding=downsample_padding,
-#             resnet_time_scale_shift=resnet_time_scale_shift,
-#         )
-#     elif down_block_type == "AttnDownEncoderBlock2D":
-#         return AttnDownEncoderBlock2D(
-#             num_layers=num_layers,
-#             in_channels=in_channels,
-#             out_channels=out_channels,
-#             dropout=dropout,
-#             add_downsample=add_downsample,
-#             resnet_eps=resnet_eps,
-#             resnet_act_fn=resnet_act_fn,
-#             resnet_groups=resnet_groups,
-#             downsample_padding=downsample_padding,
-#             attention_head_dim=attention_head_dim,
-#             resnet_time_scale_shift=resnet_time_scale_shift,
-#         )
-#     elif down_block_type == "KDownBlock2D":
-#         return KDownBlock2D(
-#             num_layers=num_layers,
-#             in_channels=in_channels,
-#             out_channels=out_channels,
-#             temb_channels=temb_channels,
-#             dropout=dropout,
-#             add_downsample=add_downsample,
-#             resnet_eps=resnet_eps,
-#             resnet_act_fn=resnet_act_fn,
-#         )
-#     elif down_block_type == "KCrossAttnDownBlock2D":
-#         return KCrossAttnDownBlock2D(
-#             num_layers=num_layers,
-#             in_channels=in_channels,
-#             out_channels=out_channels,
-#             temb_channels=temb_channels,
-#             dropout=dropout,
-#             add_downsample=add_downsample,
-#             resnet_eps=resnet_eps,
-#             resnet_act_fn=resnet_act_fn,
-#             cross_attention_dim=cross_attention_dim,
-#             attention_head_dim=attention_head_dim,
-#             add_self_attention=True if not add_downsample else False,
-#         )
-#     raise ValueError(f"{down_block_type} does not exist.")
-
-
-
 # !!! -------------------------------------
 class MidBlockTemporalDecoder(nn.Module):
     def __init__(
@@ -1755,8 +1441,6 @@ class MidBlockTemporalDecoder(nn.Module):
                     eps=1e-6,
                     temporal_eps=1e-5,
                     merge_factor=0.0,
-                    merge_strategy="learned",
-                    switch_spatial_to_temporal_mix=True,
                 )
             )
 
@@ -1823,8 +1507,6 @@ class UpBlockTemporalDecoder(nn.Module):
                     eps=1e-6,
                     temporal_eps=1e-5,
                     merge_factor=0.0,
-                    merge_strategy="learned",
-                    switch_spatial_to_temporal_mix=True,
                 )
             )
         self.resnets = nn.ModuleList(resnets)
@@ -1896,7 +1578,7 @@ class DownEncoderBlock2D(nn.Module):
                     eps=resnet_eps,
                     groups=resnet_groups,
                     dropout=dropout,
-                    time_embedding_norm=resnet_time_scale_shift,
+                    time_embedding_norm="default",
                     non_linearity=resnet_act_fn,
                     output_scale_factor=output_scale_factor,
                     pre_norm=resnet_pre_norm,
@@ -1917,13 +1599,7 @@ class DownEncoderBlock2D(nn.Module):
             self.downsamplers = None
         # pdb.set_trace()
 
-    # def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
     def forward(self, hidden_states):
-        # args = ()
-        # kwargs = {}
-        # if len(args) > 0 or kwargs.get("scale", None) is not None: # False
-        #     deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
-        #     deprecate("scale", "1.0.0", deprecation_message)
         for resnet in self.resnets:
             hidden_states = resnet(hidden_states, temb=None)
 
@@ -1968,15 +1644,6 @@ class Downsample2D(nn.Module):
         self.padding = padding
         stride = 2
         self.name = name
-
-        # if norm_type == "ln_norm":
-        #     self.norm = nn.LayerNorm(channels, eps, elementwise_affine)
-        # elif norm_type == "rms_norm":
-        #     self.norm = RMSNorm(channels, eps, elementwise_affine)
-        # elif norm_type is None:
-        #     self.norm = None
-        # else:
-        #     raise ValueError(f"unknown norm_type: {norm_type}")
         self.norm = None
 
         if use_conv:
@@ -1997,19 +1664,8 @@ class Downsample2D(nn.Module):
             self.conv = conv
         # pdb.set_trace()
 
-    # def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
     def forward(self, hidden_states):
-        # args = ()
-        # kwargs = {}
-
-        # if len(args) > 0 or kwargs.get("scale", None) is not None:
-        #     deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
-        #     deprecate("scale", "1.0.0", deprecation_message)
         assert hidden_states.shape[1] == self.channels
-
-        # assert self.norm == None
-        # if self.norm is not None:
-        #     hidden_states = self.norm(hidden_states.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
         assert self.use_conv and self.padding == 0
         if self.use_conv and self.padding == 0: # True
@@ -2061,16 +1717,6 @@ class Upsample2D(nn.Module):
         self.use_conv_transpose = use_conv_transpose
         self.name = name
         self.interpolate = interpolate
-
-        # assert norm_type == None
-        # if norm_type == "ln_norm":
-        #     self.norm = nn.LayerNorm(channels, eps, elementwise_affine)
-        # elif norm_type == "rms_norm":
-        #     self.norm = RMSNorm(channels, eps, elementwise_affine)
-        # elif norm_type is None:
-        #     self.norm = None
-        # else:
-        #     raise ValueError(f"unknown norm_type: {norm_type}")
         self.norm = None
 
         assert use_conv_transpose == False
@@ -2094,24 +1740,8 @@ class Upsample2D(nn.Module):
         # pdb.set_trace()
 
 
-    # def forward(self, hidden_states: torch.Tensor, output_size: Optional[int] = None, *args, **kwargs) -> torch.Tensor:
-    #     # output_size = None
-    #     # args = ()
-    #     # kwargs = {}
-
-    #     if len(args) > 0 or kwargs.get("scale", None) is not None:
-    #         deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
-    #         deprecate("scale", "1.0.0", deprecation_message)
     def forward(self, hidden_states: torch.Tensor, output_size= None):
         assert hidden_states.shape[1] == self.channels
-
-        # if self.norm is not None: # False
-        #     pdb.set_trace()
-        #     hidden_states = self.norm(hidden_states.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-
-        # if self.use_conv_transpose:
-        #     pdb.set_trace()
-        #     return self.conv(hidden_states)
 
         # Cast to float32 to as 'upsample_nearest2d_out_frame' op does not support bfloat16
         # TODO(Suraj): Remove this cast once the issue is fixed in PyTorch
@@ -2194,15 +1824,6 @@ class ResnetBlock2D(nn.Module):
         # conv_2d_out_channels = 128
         assert time_embedding_norm == 'default'
 
-        # if time_embedding_norm == "ada_group":
-        #     raise ValueError(
-        #         "This class cannot be used with `time_embedding_norm==ada_group`, please use `ResnetBlockCondNorm2D` instead",
-        #     )
-        # if time_embedding_norm == "spatial":
-        #     raise ValueError(
-        #         "This class cannot be used with `time_embedding_norm==spatial`, please use `ResnetBlockCondNorm2D` instead",
-        #     )
-
         self.pre_norm = True
         self.in_channels = in_channels
         out_channels = in_channels if out_channels is None else out_channels
@@ -2221,16 +1842,6 @@ class ResnetBlock2D(nn.Module):
 
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
 
-        # assert temb_channels == None
-        # if temb_channels is not None: # False
-        #     if self.time_embedding_norm == "default":
-        #         self.time_emb_proj = nn.Linear(temb_channels, out_channels)
-        #     elif self.time_embedding_norm == "scale_shift":
-        #         self.time_emb_proj = nn.Linear(temb_channels, 2 * out_channels)
-        #     else:
-        #         raise ValueError(f"unknown time_embedding_norm : {self.time_embedding_norm} ")
-        # else:
-        #     self.time_emb_proj = None
         self.time_emb_proj = None
 
         self.norm2 = torch.nn.GroupNorm(num_groups=groups_out, num_channels=out_channels, eps=eps, affine=True)
@@ -2245,22 +1856,8 @@ class ResnetBlock2D(nn.Module):
 
         assert kernel != "fir" and kernel != "sde_vp"
         if self.up: # False
-            # if kernel == "fir":
-            #     fir_kernel = (1, 3, 3, 1)
-            #     self.upsample = lambda x: upsample_2d(x, kernel=fir_kernel)
-            # elif kernel == "sde_vp":
-            #     self.upsample = partial(F.interpolate, scale_factor=2.0, mode="nearest")
-            # else:
-            #     self.upsample = Upsample2D(in_channels, use_conv=False)
             self.upsample = Upsample2D(in_channels, use_conv=False)
         elif self.down: # False
-            # if kernel == "fir":
-            #     fir_kernel = (1, 3, 3, 1)
-            #     self.downsample = lambda x: downsample_2d(x, kernel=fir_kernel)
-            # elif kernel == "sde_vp":
-            #     self.downsample = partial(F.avg_pool2d, kernel_size=2, stride=2)
-            # else:
-            #     self.downsample = Downsample2D(in_channels, use_conv=False, padding=1, name="op")
             self.downsample = Downsample2D(in_channels, use_conv=False, padding=1, name="op")
 
         self.use_in_shortcut = self.in_channels != conv_2d_out_channels if use_in_shortcut is None else use_in_shortcut
@@ -2277,7 +1874,9 @@ class ResnetBlock2D(nn.Module):
             )
         assert self.time_emb_proj == None
 
-    def forward(self, input_tensor: torch.Tensor, temb: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+    # def forward(self, input_tensor: torch.Tensor, temb: torch.Tensor, *args, **kwargs) -> torch.Tensor:
+
+    def forward(self, input_tensor, temb):
         # temb = None
         # args = ()
         # kwargs = {}
@@ -2307,11 +1906,6 @@ class ResnetBlock2D(nn.Module):
 
         hidden_states = self.conv1(hidden_states)
 
-        # assert self.time_emb_proj == None
-        # if self.time_emb_proj is not None: # False
-        #     if not self.skip_time_act:
-        #         temb = self.nonlinearity(temb)
-        #     temb = self.time_emb_proj(temb)[:, :, None, None]
 
         # self.time_embedding_norm -- 'default'
         assert self.time_embedding_norm == 'default'
@@ -2320,16 +1914,6 @@ class ResnetBlock2D(nn.Module):
             if temb is not None:
                 hidden_states = hidden_states + temb
             hidden_states = self.norm2(hidden_states)
-        # elif self.time_embedding_norm == "scale_shift":
-        #     if temb is None:
-        #         raise ValueError(
-        #             f" `temb` should not be None when `time_embedding_norm` is {self.time_embedding_norm}"
-        #         )
-        #     time_scale, time_shift = torch.chunk(temb, 2, dim=1)
-        #     hidden_states = self.norm2(hidden_states)
-        #     hidden_states = hidden_states * (1 + time_scale) + time_shift
-        # else:
-        #     hidden_states = self.norm2(hidden_states)
 
         hidden_states = self.nonlinearity(hidden_states)
 
@@ -2367,15 +1951,13 @@ class TemporalResnetBlock(nn.Module):
         padding = [k // 2 for k in kernel_size]
 
         self.norm1 = torch.nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=eps, affine=True)
-        self.conv1 = nn.Conv3d(
-            in_channels,
-            out_channels,
+        self.conv1 = nn.Conv3d(in_channels, out_channels,
             kernel_size=kernel_size,
             stride=1,
             padding=padding,
         )
-        assert temb_channels == None
 
+        assert temb_channels == None
         if temb_channels is not None:
             self.time_emb_proj = nn.Linear(temb_channels, out_channels)
         else:
@@ -2384,9 +1966,7 @@ class TemporalResnetBlock(nn.Module):
         self.norm2 = torch.nn.GroupNorm(num_groups=32, num_channels=out_channels, eps=eps, affine=True)
 
         self.dropout = torch.nn.Dropout(0.0)
-        self.conv2 = nn.Conv3d(
-            out_channels,
-            out_channels,
+        self.conv2 = nn.Conv3d(out_channels, out_channels,
             kernel_size=kernel_size,
             stride=1,
             padding=padding,
@@ -2398,9 +1978,7 @@ class TemporalResnetBlock(nn.Module):
 
         self.conv_shortcut = None
         if self.use_in_shortcut:
-            self.conv_shortcut = nn.Conv3d(
-                in_channels,
-                out_channels,
+            self.conv_shortcut = nn.Conv3d(in_channels, out_channels,
                 kernel_size=1,
                 stride=1,
                 padding=0,
@@ -2442,8 +2020,6 @@ class SpatioTemporalResBlock(nn.Module):
         eps: float = 1e-6,
         temporal_eps: Optional[float] = None,
         merge_factor: float = 0.5,
-        merge_strategy="learned_with_images",
-        switch_spatial_to_temporal_mix: bool = False,
     ):
         super().__init__()
         # in_channels = 512
@@ -2452,8 +2028,6 @@ class SpatioTemporalResBlock(nn.Module):
         # eps = 1e-06
         # temporal_eps = 1e-05
         # merge_factor = 0.0
-        # merge_strategy = 'learned'
-        # switch_spatial_to_temporal_mix = True
 
         self.spatial_res_block = ResnetBlock2D(
             in_channels=in_channels,
@@ -2469,11 +2043,7 @@ class SpatioTemporalResBlock(nn.Module):
             eps=temporal_eps if temporal_eps is not None else eps,
         )
 
-        self.time_mixer = AlphaBlender(
-            alpha=merge_factor,
-            merge_strategy=merge_strategy,
-            switch_spatial_to_temporal_mix=switch_spatial_to_temporal_mix,
-        )
+        self.time_mixer = AlphaBlender(alpha=merge_factor)
 
     def forward(self,
         hidden_states: torch.Tensor,
@@ -2508,76 +2078,17 @@ class SpatioTemporalResBlock(nn.Module):
 
 # !!! -------------------------------
 class AlphaBlender(nn.Module):
-    strategies = ["learned", "fixed", "learned_with_images"]
-    def __init__(self,
-        alpha: float,
-        merge_strategy: str = "learned_with_images",
-        switch_spatial_to_temporal_mix: bool = False,
-    ):
+    def __init__(self, alpha: float):
         super().__init__()
-        # alpha = 0.0
-        # merge_strategy = 'learned'
-        # switch_spatial_to_temporal_mix = True
-
-        # assert merge_strategy == "learned"
-        # assert switch_spatial_to_temporal_mix == True
-
-        # self.merge_strategy = merge_strategy
-        # self.switch_spatial_to_temporal_mix = switch_spatial_to_temporal_mix  # For TemporalVAE
-
-        # if merge_strategy not in self.strategies:
-        #     raise ValueError(f"merge_strategy needs to be in {self.strategies}")
-
-        # if self.merge_strategy == "fixed":
-        #     self.register_buffer("mix_factor", torch.Tensor([alpha]))
-        # elif self.merge_strategy == "learned" or self.merge_strategy == "learned_with_images":
-        #     self.register_parameter("mix_factor", torch.nn.Parameter(torch.Tensor([alpha])))
-        # else:
-        #     raise ValueError(f"Unknown merge strategy {self.merge_strategy}")
         self.register_parameter("mix_factor", torch.nn.Parameter(torch.Tensor([alpha])))
-
-    def get_alpha(self, image_only_indicator: torch.Tensor, ndims: int) -> torch.Tensor:
-        # if self.merge_strategy == "fixed":
-        #     alpha = self.mix_factor
-
-        # elif self.merge_strategy == "learned":
-        #     alpha = torch.sigmoid(self.mix_factor)
-
-        # elif self.merge_strategy == "learned_with_images":
-        #     if image_only_indicator is None:
-        #         raise ValueError("Please provide image_only_indicator to use learned_with_images merge strategy")
-
-        #     alpha = torch.where(
-        #         image_only_indicator.bool(),
-        #         torch.ones(1, 1, device=image_only_indicator.device),
-        #         torch.sigmoid(self.mix_factor)[..., None],
-        #     )
-
-        #     # (batch, channel, frames, height, width)
-        #     if ndims == 5:
-        #         alpha = alpha[:, None, :, None, None]
-        #     # (batch*frames, height*width, channels)
-        #     elif ndims == 3:
-        #         alpha = alpha.reshape(-1)[:, None, None]
-        #     else:
-        #         raise ValueError(f"Unexpected ndims {ndims}. Dimensions should be 3 or 5")
-
-        # else:
-        #     raise NotImplementedError
-
-        alpha = torch.sigmoid(self.mix_factor)
-        return alpha
 
     def forward(self,
         x_spatial: torch.Tensor,
         x_temporal: torch.Tensor,
         image_only_indicator: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        alpha = self.get_alpha(image_only_indicator, x_spatial.ndim)
+    ):
+        alpha = torch.sigmoid(self.mix_factor)
         alpha = alpha.to(x_spatial.dtype)
-
-        # if self.switch_spatial_to_temporal_mix:
-        #     alpha = 1.0 - alpha
         alpha = 1.0 - alpha
 
         x = alpha * x_spatial + (1.0 - alpha) * x_temporal
@@ -2601,16 +2112,7 @@ class AttnProcessor2_0:
         *args,
         **kwargs,
     ) -> torch.Tensor:
-        if len(args) > 0 or kwargs.get("scale", None) is not None:
-            pdb.set_trace()
-            deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
-            deprecate("scale", "1.0.0", deprecation_message)
-
         residual = hidden_states
-        if attn.spatial_norm is not None:
-            pdb.set_trace()
-            hidden_states = attn.spatial_norm(hidden_states, temb)
-
         input_ndim = hidden_states.ndim
 
         if input_ndim == 4:
@@ -2623,8 +2125,7 @@ class AttnProcessor2_0:
         )
 
         if attention_mask is not None:
-            # pdb.set_trace()
-
+            pdb.set_trace()
             attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
             # scaled_dot_product_attention expects attention_mask shape to be
             # (batch, heads, source_length, target_length)
@@ -2652,12 +2153,12 @@ class AttnProcessor2_0:
         key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
         value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
 
-        if attn.norm_q is not None:
-            pdb.set_trace()
-            query = attn.norm_q(query)
-        if attn.norm_k is not None:
-            pdb.set_trace()
-            key = attn.norm_k(key)
+        # if attn.norm_q is not None:
+        #     pdb.set_trace()
+        #     query = attn.norm_q(query)
+        # if attn.norm_k is not None:
+        #     pdb.set_trace()
+        #     key = attn.norm_k(key)
 
         # the output of sdp = (batch, num_heads, seq_len, head_dim)
         # TODO: add support for attn.scale when we move to Torch 2.1
@@ -2679,11 +2180,11 @@ class AttnProcessor2_0:
 
         if attn.residual_connection:
             hidden_states = hidden_states + residual
-        else:
-            pdb.set_trace()
+        # else:
+        #     pdb.set_trace()
 
-        assert attn.rescale_output_factor == 1.0
-        hidden_states = hidden_states / attn.rescale_output_factor
+        # assert attn.rescale_output_factor == 1.0
+        # hidden_states = hidden_states / attn.rescale_output_factor
 
         return hidden_states
 
