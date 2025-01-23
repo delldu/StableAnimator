@@ -505,6 +505,7 @@ class BasicTransformerBlock(nn.Module):
         attention_head_dim,
         cross_attention_dim=cross_attention_dim,
 
+        # AnimationAttnProcessor, AnimationIDAttnNormalizedProcessor
     """
     def __init__(self,
         dim = 320,
@@ -550,6 +551,8 @@ class BasicTransformerBlock(nn.Module):
     ) -> torch.Tensor:
         # encoder_attention_mask = None
         # timestep = None
+        # print(f"self.attn1.inner_dim = {self.attn1.inner_dim}, self.attn1.processor.hidden_size = {self.attn1.processor.hidden_size}")
+        # print(f"self.attn2.inner_dim = {self.attn2.inner_dim}, self.attn2.processor.hidden_size = {self.attn2.processor.hidden_size}")
 
         # Notice that normalization is always applied before the real computation in the following blocks.
         # 1. Self-Attention
@@ -602,6 +605,7 @@ class TransformerSpatioTemporalModel(nn.Module):
         self.proj_in = nn.Linear(in_channels, inner_dim)
 
         # 3. Define transformers blocks
+        # AnimationAttnProcessor, AnimationIDAttnNormalizedProcessor
         self.transformer_blocks = nn.ModuleList(
             [
                 BasicTransformerBlock(
@@ -745,7 +749,7 @@ class Attention(nn.Module):
     def __init__(self,
         query_dim = 320,
         cross_attention_dim = None, # 1024 or None
-        heads: int = 8,
+        heads: int = 5,
         dim_head: int = 64,
         dropout: float = 0.0,
         bias: bool = False,
@@ -755,7 +759,7 @@ class Attention(nn.Module):
         super().__init__()
         # assert processor == None
 
-        self.inner_dim = dim_head * heads
+        self.inner_dim = dim_head * heads # hidden_size ???
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
         self.rescale_output_factor = 1.0
         self.residual_connection = False
@@ -807,9 +811,9 @@ class Attention(nn.Module):
         # attention_mask = None
         # cross_attention_kwargs = {}
 
-        # xxxx_debug
-        # pdb.set_trace()
-
+        # self.processor -- AnimationAttnProcessor()
+        # self.processor -- AnimationIDAttnNormalizedProcessor()
+        # self.processor -- <animation.modules.unet.XFormersAttnProcessor()
         return self.processor(self,
             hidden_states,
             encoder_hidden_states=encoder_hidden_states,
@@ -1095,50 +1099,7 @@ def get_down_block(
     #     ['CrossAttnDownBlockSpatioTemporal', 'CrossAttnDownBlockSpatioTemporal', 
     #     'CrossAttnDownBlockSpatioTemporal', 'DownBlockSpatioTemporal']
 
-
-    print("down_block_type: ", down_block_type)
-    
-    if down_block_type == "DownBlock3D":
-        pdb.set_trace()
-
-        return DownBlock3D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            temb_channels=temb_channels,
-            add_downsample=add_downsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            resnet_groups=resnet_groups,
-            downsample_padding=downsample_padding,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-            dropout=dropout,
-        )
-    elif down_block_type == "CrossAttnDownBlock3D":
-        pdb.set_trace()
-
-        if cross_attention_dim is None:
-            raise ValueError("cross_attention_dim must be specified for CrossAttnDownBlock3D")
-        return CrossAttnDownBlock3D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            temb_channels=temb_channels,
-            add_downsample=add_downsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            resnet_groups=resnet_groups,
-            downsample_padding=downsample_padding,
-            cross_attention_dim=cross_attention_dim,
-            num_attention_heads=num_attention_heads,
-            dual_cross_attention=dual_cross_attention,
-            use_linear_projection=use_linear_projection,
-            only_cross_attention=only_cross_attention,
-            upcast_attention=upcast_attention,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-            dropout=dropout,
-        )
-    elif down_block_type == "DownBlockSpatioTemporal": # True
+    if down_block_type == "DownBlockSpatioTemporal": # True
         # added for SDV
         return DownBlockSpatioTemporal(
             num_layers=num_layers,
@@ -1194,47 +1155,7 @@ def get_up_block(
     print("up_block_type: ", up_block_type)
     #     ['UpBlockSpatioTemporal', 'CrossAttnUpBlockSpatioTemporal', 
     #     'CrossAttnUpBlockSpatioTemporal', 'CrossAttnUpBlockSpatioTemporal']
-
-    if up_block_type == "UpBlock3D":
-        pdb.set_trace()
-        return UpBlock3D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            prev_output_channel=prev_output_channel,
-            temb_channels=temb_channels,
-            add_upsample=add_upsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            resnet_groups=resnet_groups,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-            # resolution_idx=resolution_idx,
-            dropout=dropout,
-        )
-    elif up_block_type == "CrossAttnUpBlock3D":
-        pdb.set_trace()
-        if cross_attention_dim is None:
-            raise ValueError("cross_attention_dim must be specified for CrossAttnUpBlock3D")
-        return CrossAttnUpBlock3D(
-            num_layers=num_layers,
-            in_channels=in_channels,
-            out_channels=out_channels,
-            prev_output_channel=prev_output_channel,
-            temb_channels=temb_channels,
-            add_upsample=add_upsample,
-            resnet_eps=resnet_eps,
-            resnet_act_fn=resnet_act_fn,
-            resnet_groups=resnet_groups,
-            cross_attention_dim=cross_attention_dim,
-            num_attention_heads=num_attention_heads,
-            dual_cross_attention=dual_cross_attention,
-            use_linear_projection=use_linear_projection,
-            only_cross_attention=only_cross_attention,
-            upcast_attention=upcast_attention,
-            resnet_time_scale_shift=resnet_time_scale_shift,
-            dropout=dropout,
-        )
-    elif up_block_type == "UpBlockSpatioTemporal": # True
+    if up_block_type == "UpBlockSpatioTemporal": # True
         # added for SDV
         return UpBlockSpatioTemporal(
             num_layers=num_layers,
@@ -1685,221 +1606,6 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
 
         return hidden_states
 
-# xxxx_debug
-class AnimationAttnProcessor(nn.Module):
-    def __init__(self,
-        hidden_size=None,
-        cross_attention_dim=None,
-        rank=4,
-        network_alpha=None,
-        lora_scale=1.0,):
-        super().__init__()
-        if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
-        # hidden_size = 320
-        # cross_attention_dim = None
-        # rank = 128
-        # network_alpha = None
-        # lora_scale = 1.0
-        assert cross_attention_dim == None
-
-    def __call__(self,
-        attn,
-        hidden_states,
-        encoder_hidden_states=None,
-        attention_mask=None,
-        temb=None,
-    ):
-        # attention_mask = None
-        # temb = None
-        # (Pdb) attn
-        # Attention(
-        #   (to_q): Linear(in_features=320, out_features=320, bias=False)
-        #   (to_k): Linear(in_features=320, out_features=320, bias=False)
-        #   (to_v): Linear(in_features=320, out_features=320, bias=False)
-        #   (to_out): ModuleList(
-        #     (0): Linear(in_features=320, out_features=320, bias=True)
-        #     (1): Dropout(p=0.0, inplace=False)
-        #   )
-        #   (processor): AnimationAttnProcessor()
-        # )
-        # tensor [hidden_states] size: [16, 4096, 320], min: -0.878906, max: 1.689453, mean: 0.00032
-        assert hidden_states is not None
-        # assert encoder_hidden_states is not None
-        # assert attention_mask == None
-        assert temb == None
-
-        residual = hidden_states
-        input_ndim = hidden_states.ndim # 3
-
-        # tensor [encoder_hidden_states] size: [16, 4096, 320], min: -2.890625, max: 3.320312, mean: 0.006327
-        batch_size, sequence_length, _ = (
-            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
-        )
-
-        # attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-        # assert attention_mask == None
-
-        query = attn.to_q(hidden_states)
-
-        if encoder_hidden_states is None:
-            # ==> pdb.set_trace()
-            encoder_hidden_states = hidden_states
-
-        key = attn.to_k(encoder_hidden_states)
-        value = attn.to_v(encoder_hidden_states)
-
-        query = attn.head_to_batch_dim(query).contiguous()
-        key = attn.head_to_batch_dim(key).contiguous()
-        value = attn.head_to_batch_dim(value).contiguous()
-
-        # assert attention_mask == None
-        if is_xformers_available(): # True
-            ### xformers
-            hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=None)
-            hidden_states = hidden_states.to(query.dtype)
-        else:
-            attention_probs = attn.get_attention_scores(query, key, None)
-            hidden_states = torch.bmm(attention_probs, value)
-        hidden_states = attn.batch_to_head_dim(hidden_states)
-
-        # linear proj
-        # hidden_states = attn.to_out[0](hidden_states) + self.lora_scale * self.to_out_lora(hidden_states)
-        hidden_states = attn.to_out[0](hidden_states)
-        hidden_states = attn.to_out[1](hidden_states)
-
-        return hidden_states
-
-class AnimationIDAttnNormalizedProcessor(nn.Module):
-    def __init__(self,
-            hidden_size,
-            cross_attention_dim=None,
-            rank=4,
-            network_alpha=None,
-            lora_scale=1.0,
-            scale=1.0,
-            num_tokens=4):
-        super().__init__()
-        # hidden_size = 320
-        # cross_attention_dim = 1024
-        # rank = 128
-        # network_alpha = None
-        # lora_scale = 1.0
-        # scale = 1.0
-        # num_tokens = 4
-
-
-        self.scale = scale
-        self.id_to_k = nn.Linear(cross_attention_dim or hidden_size, hidden_size, bias=False)
-        self.id_to_v = nn.Linear(cross_attention_dim or hidden_size, hidden_size, bias=False)
-
-        self.num_tokens = num_tokens
-        # self = AnimationIDAttnNormalizedProcessor(
-        #   (id_to_k): Linear(in_features=1024, out_features=320, bias=False)
-        #   (id_to_v): Linear(in_features=1024, out_features=320, bias=False)
-        # )
-
-    def __call__(self,
-            attn,
-            hidden_states,
-            encoder_hidden_states=None,
-            attention_mask=None,
-            temb=None,
-            scale=1.0,
-    ):
-        # (Pdb) attn
-        # Attention(
-        #   (to_q): Linear(in_features=320, out_features=320, bias=False)
-        #   (to_k): Linear(in_features=1024, out_features=320, bias=False)
-        #   (to_v): Linear(in_features=1024, out_features=320, bias=False)
-        #   (to_out): ModuleList(
-        #     (0): Linear(in_features=320, out_features=320, bias=True)
-        #     (1): Dropout(p=0.0, inplace=False)
-        #   )
-        #   (processor): AnimationIDAttnNormalizedProcessor(
-        #     (id_to_k): Linear(in_features=1024, out_features=320, bias=False)
-        #     (id_to_v): Linear(in_features=1024, out_features=320, bias=False)
-        #   )
-        # )
-        assert hidden_states is not None
-        assert encoder_hidden_states is not None
-        # assert attention_mask == None
-        assert temb == None
-        assert scale == 1.0
-        
-        residual = hidden_states
-        input_ndim = hidden_states.ndim
-
-        batch_size, sequence_length, _ = (
-            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
-        )
-
-        # assert attention_mask == None
-        # attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-        # assert attention_mask == None
-
-        query = attn.to_q(hidden_states)
-
-        encoder_hidden_states = encoder_hidden_states.to(hidden_states.dtype)
-
-        end_pos = encoder_hidden_states.shape[1] - self.num_tokens
-        encoder_hidden_states, ip_hidden_states = (
-            encoder_hidden_states[:, :end_pos, :],
-            encoder_hidden_states[:, end_pos:, :],
-        )
-
-        key = attn.to_k(encoder_hidden_states)
-        value = attn.to_v(encoder_hidden_states)
-
-        inner_dim = key.shape[-1]
-        head_dim = inner_dim // attn.heads
-
-        query = attn.head_to_batch_dim(query).contiguous()
-        key = attn.head_to_batch_dim(key).contiguous()
-        value = attn.head_to_batch_dim(value).contiguous()
-
-        key = key.to(query.dtype)
-        value = value.to(query.dtype)
-
-        # assert attention_mask == None
-        if is_xformers_available(): # True
-            ### xformers
-            hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=None)
-            hidden_states = hidden_states.to(query.dtype)
-        else:
-            hidden_states = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0,
-                                                           is_causal=False)
-            hidden_states = hidden_states.to(query.dtype)
-
-        hidden_states = attn.batch_to_head_dim(hidden_states)
-
-        ip_key = self.id_to_k(ip_hidden_states)
-        ip_value = self.id_to_v(ip_hidden_states)
-
-        ip_key = attn.head_to_batch_dim(ip_key).contiguous()
-        ip_value = attn.head_to_batch_dim(ip_value).contiguous()
-        ip_key = ip_key.to(query.dtype)
-        ip_value = ip_value.to(query.dtype)
-
-        if is_xformers_available(): # True
-            ### xformers
-            ip_hidden_states = xformers.ops.memory_efficient_attention(query, ip_key, ip_value, attn_bias=None)
-            ip_hidden_states = ip_hidden_states.to(query.dtype)
-        else:
-            ip_hidden_states = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0,
-                                                              is_causal=False)
-            ip_hidden_states = ip_hidden_states.to(query.dtype)
-
-        ip_hidden_states = attn.batch_to_head_dim(ip_hidden_states)
-        mean_latents, std_latents = torch.mean(hidden_states, dim=(1, 2), keepdim=True), torch.std(hidden_states, dim=(1, 2), keepdim=True)
-        mean_ip, std_ip = torch.mean(ip_hidden_states, dim=(1, 2), keepdim=True), torch.std(ip_hidden_states, dim=(1, 2), keepdim=True)
-        ip_hidden_states = (ip_hidden_states - mean_ip) * (std_latents / (std_ip + 1e-5)) + mean_latents
-        hidden_states = hidden_states + self.scale * ip_hidden_states
-        hidden_states = attn.to_out[0](hidden_states)
-        hidden_states = attn.to_out[1](hidden_states)
-
-        return hidden_states
-
 
 class Downsample2D(nn.Module):
     """A 2D downsampling layer with an optional convolution.
@@ -2297,43 +2003,44 @@ class XFormersAttnProcessor:
 
         residual = hidden_states
 
-        if attn.spatial_norm is not None:
-            pdb.set_trace()
-            hidden_states = attn.spatial_norm(hidden_states, temb)
+        # if attn.spatial_norm is not None:
+        #     pdb.set_trace()
+        #     hidden_states = attn.spatial_norm(hidden_states, temb)
 
         input_ndim = hidden_states.ndim
         # hidden_states.size() -- [4096, 16, 320]
-        if input_ndim == 4:
-            pdb.set_trace()
-            batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+        # if input_ndim == 4:
+        #     pdb.set_trace()
+        #     batch_size, channel, height, width = hidden_states.shape
+        #     hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
         batch_size, key_tokens, _ = (
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
 
         attention_mask = attn.prepare_attention_mask(attention_mask, key_tokens, batch_size)
-        if attention_mask is not None:
-            pdb.set_trace()
-            # expand our mask's singleton query_tokens dimension:
-            #   [batch*heads,            1, key_tokens] ->
-            #   [batch*heads, query_tokens, key_tokens]
-            # so that it can be added as a bias onto the attention scores that xformers computes:
-            #   [batch*heads, query_tokens, key_tokens]
-            # we do this explicitly because xformers doesn't broadcast the singleton dimension for us.
-            _, query_tokens, _ = hidden_states.shape
-            attention_mask = attention_mask.expand(-1, query_tokens, -1)
+        # if attention_mask is not None:
+        #     pdb.set_trace()
+        #     # expand our mask's singleton query_tokens dimension:
+        #     #   [batch*heads,            1, key_tokens] ->
+        #     #   [batch*heads, query_tokens, key_tokens]
+        #     # so that it can be added as a bias onto the attention scores that xformers computes:
+        #     #   [batch*heads, query_tokens, key_tokens]
+        #     # we do this explicitly because xformers doesn't broadcast the singleton dimension for us.
+        #     _, query_tokens, _ = hidden_states.shape
+        #     attention_mask = attention_mask.expand(-1, query_tokens, -1)
 
         if attn.group_norm is not None:
+            pdb.set_trace()
             hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
         query = attn.to_q(hidden_states)
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
-        elif attn.norm_cross:
-            pdb.set_trace()
-            encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
+        # elif attn.norm_cross:
+        #     pdb.set_trace()
+        #     encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
 
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
@@ -2353,13 +2060,13 @@ class XFormersAttnProcessor:
         # dropout
         hidden_states = attn.to_out[1](hidden_states)
 
-        if input_ndim == 4:
-            pdb.set_trace()
-            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+        # if input_ndim == 4:
+        #     pdb.set_trace()
+        #     hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
-        if attn.residual_connection:
-            pdb.set_trace()
-            hidden_states = hidden_states + residual
+        # if attn.residual_connection:
+        #     pdb.set_trace()
+        #     hidden_states = hidden_states + residual
 
         hidden_states = hidden_states / attn.rescale_output_factor
 
@@ -2377,6 +2084,8 @@ class AnimationAttnProcessor(nn.Module):
         # pdb.set_trace()
         if not hasattr(F, "scaled_dot_product_attention"):
             raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
+        self.hidden_size = hidden_size
+
         # hidden_size = 320
         # cross_attention_dim = None
         # rank = 128
@@ -2458,6 +2167,9 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
             scale=1.0,
             num_tokens=4):
         super().__init__()
+        self.hidden_size = hidden_size
+
+        assert cross_attention_dim == 1024
 
         self.scale = scale
         # self.id_to_k = nn.Linear(cross_attention_dim or hidden_size, hidden_size, bias=False)
@@ -2470,6 +2182,7 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         #   (id_to_k): Linear(in_features=1024, out_features=320, bias=False)
         #   (id_to_v): Linear(in_features=1024, out_features=320, bias=False)
         # )
+        assert self.scale == 1.0
 
     def __call__(self,
             attn,

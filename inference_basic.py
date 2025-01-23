@@ -351,6 +351,7 @@ if __name__ == "__main__":
         elif "transformer_blocks" in name:
             # name -- 'down_blocks.0.attentions.0.transformer_blocks.0.attn1.processor'
             cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
+            block_id = -1000
             if name.startswith("mid_block"):
                 hidden_size = unet.config.block_out_channels[-1]
             elif name.startswith("up_blocks"):
@@ -359,6 +360,8 @@ if __name__ == "__main__":
             elif name.startswith("down_blocks"):
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = unet.config.block_out_channels[block_id]
+            print(f"block_id = {block_id}, hidden_size: {hidden_size}", )
+
             if cross_attention_dim is None:
                 # name -- 'down_blocks.0.attentions.0.transformer_blocks.0.attn1.processor'
                 # hidden_size -- 320, cross_attention_dim === None
