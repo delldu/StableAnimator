@@ -438,6 +438,9 @@ class TimestepEmbedding(nn.Module):
         sample_proj_bias=True,
     ):
         super().__init__()
+        # assert out_dim is not None
+        assert sample_proj_bias == True
+
         self.linear_1 = nn.Linear(in_channels, time_embed_dim, sample_proj_bias)
         self.act = nn.SiLU() # get_activation(act_fn)
         if out_dim is not None:
@@ -805,8 +808,9 @@ class Attention(nn.Module):
         # cross_attention_kwargs = {}
 
         # xxxx_debug
-        return self.processor(
-            self,
+        # pdb.set_trace()
+
+        return self.processor(self,
             hidden_states,
             encoder_hidden_states=encoder_hidden_states,
             attention_mask=attention_mask,
@@ -1421,7 +1425,8 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
     def __init__(self,
         in_channels = 320,
         out_channels = 320,
-        temb_channels = 1280,        num_layers: int = 1,
+        temb_channels = 1280,
+        num_layers = 2,
         transformer_layers_per_block = 1,
         num_attention_heads: int = 1,
         cross_attention_dim: int = 1280,
@@ -1529,15 +1534,6 @@ class UpBlockSpatioTemporal(nn.Module):
         add_upsample: bool = True,
     ):
         super().__init__()
-        # in_channels = 1280
-        # prev_output_channel = 1280
-        # out_channels = 1280
-        # temb_channels = 1280
-        # resolution_idx = 0
-        # num_layers = 3
-        # resnet_eps = 1e-06
-        # add_upsample = True
-
         resnets = []
         for i in range(num_layers):
             res_skip_channels = in_channels if (i == num_layers - 1) else out_channels
@@ -1605,17 +1601,7 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
         add_upsample: bool = True,
     ):
         super().__init__()
-        # in_channels = 640
-        # out_channels = 1280
-        # prev_output_channel = 1280
-        # temb_channels = 1280
-        # resolution_idx = 1
-        # num_layers = 3
-        # transformer_layers_per_block = [1, 1, 1]
-        # resnet_eps = 1e-06
-        # num_attention_heads = 20
-        # cross_attention_dim = 1024
-        # add_upsample = True
+
         assert num_layers == 3
 
         resnets = []
