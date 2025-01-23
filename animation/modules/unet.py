@@ -9,13 +9,13 @@ from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import UNet2DConditionLoadersMixin
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
-from .vae import (
-    # Downsample2D,
-    # SpatioTemporalResBlock,
-    # ResnetBlock2D,
-    Upsample2D,
-    # TemporalResnetBlock,
-)
+# from .vae import (
+#     # Downsample2D,
+#     # SpatioTemporalResBlock,
+#     # ResnetBlock2D,
+#     Upsample2D,
+#     # TemporalResnetBlock,
+# )
 
 from diffusers.utils.import_utils import is_xformers_available
 
@@ -53,7 +53,7 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
                     "CrossAttnUpBlockSpatioTemporal",
                     "CrossAttnUpBlockSpatioTemporal",
             ),
-            block_out_channels  = (320, 640, 1280, 1280),
+        block_out_channels = (320, 640, 1280, 1280),
             addition_time_embed_dim = 256,
             projection_class_embeddings_input_dim = 768,
             layers_per_block = [2, 2, 2, 2],
@@ -346,7 +346,7 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
                     hidden_states=sample,
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
-                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states=encoder_hidden_states, # diff !!!
                     image_only_indicator=image_only_indicator,
                 )
             else:
@@ -500,9 +500,9 @@ class BasicTransformerBlock(nn.Module):
 
     """
     def __init__(self,
-        dim: int,
-        num_attention_heads: int,
-        attention_head_dim: int,
+        dim = 320,
+        num_attention_heads = 5,
+        attention_head_dim = 64,
         dropout=0.0,
         cross_attention_dim  = 1024,
     ):
@@ -517,7 +517,7 @@ class BasicTransformerBlock(nn.Module):
             dropout=dropout,
             bias=False,
             cross_attention_dim=None,
-        )
+        ) # AnimationAttnProcessor
 
         # 2. Cross-Attn
         self.norm2 = nn.LayerNorm(dim, 1e-5, elementwise_affine=True)
@@ -528,7 +528,7 @@ class BasicTransformerBlock(nn.Module):
             dim_head=attention_head_dim,
             dropout=dropout,
             bias=False,
-        )  # is self-attn if encoder_hidden_states is none
+        )  # AnimationIDAttnNormalizedProcessor
 
         # 3. Feed-forward
         self.norm3 = nn.LayerNorm(dim, 1e-5, elementwise_affine=True)
@@ -586,7 +586,7 @@ class TransformerSpatioTemporalModel(nn.Module):
     ):
         super().__init__()
 
-        inner_dim = num_attention_heads * attention_head_dim
+        inner_dim = num_attention_heads * attention_head_dim # 320
         self.inner_dim = inner_dim
 
         # 2. Define input layers
@@ -606,6 +606,7 @@ class TransformerSpatioTemporalModel(nn.Module):
             ]
         )
 
+        # XFormersAttnProcessor() ?
         self.temporal_transformer_blocks = nn.ModuleList(
             [
                 TemporalBasicTransformerBlock(
@@ -699,8 +700,7 @@ class TransformerSpatioTemporalModel(nn.Module):
                 encoder_hidden_states=encoder_hidden_states,
             )
 
-            hidden_states_mix = hidden_states
-            hidden_states_mix = hidden_states_mix + emb
+            hidden_states_mix = hidden_states + emb
 
             hidden_states_mix = temporal_block(
                 hidden_states_mix,
@@ -735,7 +735,7 @@ class Attention(nn.Module):
 
     """
     def __init__(self,
-        query_dim: int,
+        query_dim = 320,
         cross_attention_dim = None, # 1024 or None
         heads: int = 8,
         dim_head: int = 64,
@@ -887,13 +887,13 @@ class Attention(nn.Module):
 
 class FeedForward(nn.Module):
     def __init__(self,
-        dim: int,
+        dim = 320,
         dim_out = None,
-        mult: int = 4,
-        dropout: float = 0.0,
+        mult = 4,
+        dropout = 0.0,
     ):
         super().__init__()
-        inner_dim = int(dim * mult)
+        inner_dim = int(dim * mult) # 1280
         dim_out = dim_out if dim_out is not None else dim
 
         act_fn = GEGLU(dim, inner_dim, bias=True)
@@ -925,7 +925,7 @@ class GEGLU(nn.Module):
     r"""
     A [variant](https://arxiv.org/abs/2002.05202) of the gated linear unit activation function.
     """
-    def __init__(self, dim_in: int, dim_out: int, bias: bool = True):
+    def __init__(self, dim_in=320, dim_out=1280, bias = True):
         super().__init__()
         self.proj = nn.Linear(dim_in, dim_out * 2, bias=bias)
 
@@ -949,15 +949,17 @@ class TemporalBasicTransformerBlock(nn.Module):
         cross_attention_dim=cross_attention_dim,
     """
     def __init__(self,
-        dim: int,
-        time_mix_inner_dim: int,
-        num_attention_heads: int,
-        attention_head_dim: int,
+        dim = 320,
+        time_mix_inner_dim = 320,
+        num_attention_heads = 5,
+        attention_head_dim = 64,
         cross_attention_dim = 1024,
     ):
         super().__init__()
+
         assert cross_attention_dim is not None
         self.is_res = dim == time_mix_inner_dim
+        assert self.is_res == True
 
         self.norm_in = nn.LayerNorm(dim)
 
@@ -1006,6 +1008,7 @@ class TemporalBasicTransformerBlock(nn.Module):
         hidden_states = self.norm_in(hidden_states)
         hidden_states = self.ff_in(hidden_states)
 
+        assert self.is_res == True
         if self.is_res:
             hidden_states = hidden_states + residual
 
@@ -1022,6 +1025,7 @@ class TemporalBasicTransformerBlock(nn.Module):
         norm_hidden_states = self.norm3(hidden_states)
         ff_output = self.ff(norm_hidden_states)
 
+        assert self.is_res == True
         if self.is_res:
             hidden_states = ff_output + hidden_states
         else:
@@ -1081,9 +1085,16 @@ def get_down_block(
     # transformer_layers_per_block = 1
     # temporal_transformer_layers_per_block = 1
     # dropout = 0.0
+    # # down_block_types --
+    #     ['CrossAttnDownBlockSpatioTemporal', 'CrossAttnDownBlockSpatioTemporal', 
+    #     'CrossAttnDownBlockSpatioTemporal', 'DownBlockSpatioTemporal']
+
+
     print("down_block_type: ", down_block_type)
     
     if down_block_type == "DownBlock3D":
+        pdb.set_trace()
+
         return DownBlock3D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -1098,6 +1109,8 @@ def get_down_block(
             dropout=dropout,
         )
     elif down_block_type == "CrossAttnDownBlock3D":
+        pdb.set_trace()
+
         if cross_attention_dim is None:
             raise ValueError("cross_attention_dim must be specified for CrossAttnDownBlock3D")
         return CrossAttnDownBlock3D(
@@ -1119,7 +1132,7 @@ def get_down_block(
             resnet_time_scale_shift=resnet_time_scale_shift,
             dropout=dropout,
         )
-    elif down_block_type == "DownBlockSpatioTemporal":
+    elif down_block_type == "DownBlockSpatioTemporal": # True
         # added for SDV
         return DownBlockSpatioTemporal(
             num_layers=num_layers,
@@ -1128,7 +1141,7 @@ def get_down_block(
             temb_channels=temb_channels,
             add_downsample=add_downsample,
         )
-    elif down_block_type == "CrossAttnDownBlockSpatioTemporal":
+    elif down_block_type == "CrossAttnDownBlockSpatioTemporal": # True
         # added for SDV
         if cross_attention_dim is None:
             raise ValueError("cross_attention_dim must be specified for CrossAttnDownBlockSpatioTemporal")
@@ -1173,7 +1186,11 @@ def get_up_block(
 ):
     # pdb.set_trace()
     print("up_block_type: ", up_block_type)
+    #     ['UpBlockSpatioTemporal', 'CrossAttnUpBlockSpatioTemporal', 
+    #     'CrossAttnUpBlockSpatioTemporal', 'CrossAttnUpBlockSpatioTemporal']
+
     if up_block_type == "UpBlock3D":
+        pdb.set_trace()
         return UpBlock3D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -1189,6 +1206,7 @@ def get_up_block(
             dropout=dropout,
         )
     elif up_block_type == "CrossAttnUpBlock3D":
+        pdb.set_trace()
         if cross_attention_dim is None:
             raise ValueError("cross_attention_dim must be specified for CrossAttnUpBlock3D")
         return CrossAttnUpBlock3D(
@@ -1210,7 +1228,7 @@ def get_up_block(
             resnet_time_scale_shift=resnet_time_scale_shift,
             dropout=dropout,
         )
-    elif up_block_type == "UpBlockSpatioTemporal":
+    elif up_block_type == "UpBlockSpatioTemporal": # True
         # added for SDV
         return UpBlockSpatioTemporal(
             num_layers=num_layers,
@@ -1220,7 +1238,7 @@ def get_up_block(
             temb_channels=temb_channels,
             add_upsample=add_upsample,
         )
-    elif up_block_type == "CrossAttnUpBlockSpatioTemporal":
+    elif up_block_type == "CrossAttnUpBlockSpatioTemporal": # True
         # added for SDV
         if cross_attention_dim is None:
             raise ValueError("cross_attention_dim must be specified for CrossAttnUpBlockSpatioTemporal")
@@ -1242,9 +1260,9 @@ def get_up_block(
 
 class UNetMidBlockSpatioTemporal(nn.Module):
     def __init__(self,
-        in_channels: int,
-        temb_channels: int,
-        num_layers: int = 1,
+        in_channels = 1280,
+        temb_channels = 1280,
+        num_layers = 1,
         transformer_layers_per_block = 1,
         num_attention_heads: int = 1,
         cross_attention_dim: int = 1280,
@@ -1330,7 +1348,7 @@ class UNetMidBlockSpatioTemporal(nn.Module):
 
         return hidden_states
 
-
+# --- down_block_types
 class DownBlockSpatioTemporal(nn.Module):
     def __init__(self,
         in_channels: int,
@@ -1363,6 +1381,7 @@ class DownBlockSpatioTemporal(nn.Module):
 
         self.resnets = nn.ModuleList(resnets)
 
+        assert add_downsample == False
         if add_downsample:
             self.downsamplers = nn.ModuleList(
                 [
@@ -1395,6 +1414,8 @@ class DownBlockSpatioTemporal(nn.Module):
 
             output_states = output_states + (hidden_states,)
 
+        assert self.downsamplers == None
+
         if self.downsamplers is not None:
             for downsampler in self.downsamplers:
                 hidden_states = downsampler(hidden_states)
@@ -1406,7 +1427,7 @@ class DownBlockSpatioTemporal(nn.Module):
 
         return hidden_states, output_states
 
-
+# --- down_block_types
 class CrossAttnDownBlockSpatioTemporal(nn.Module):
     def __init__(self,
         in_channels: int,
@@ -1516,7 +1537,7 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
 
         return hidden_states, output_states
 
-
+# up_block_types
 class UpBlockSpatioTemporal(nn.Module):
     def __init__(self,
         in_channels: int,
@@ -1564,11 +1585,11 @@ class UpBlockSpatioTemporal(nn.Module):
         # self.resolution_idx = resolution_idx
 
     def forward(self,
-        hidden_states: torch.Tensor,
+        hidden_states,
         res_hidden_states_tuple,
         temb = None,
         image_only_indicator = None,
-    ) -> torch.Tensor:
+    ):
         for resnet in self.resnets:
             # pop res hidden states
             res_hidden_states = res_hidden_states_tuple[-1]
@@ -1582,6 +1603,7 @@ class UpBlockSpatioTemporal(nn.Module):
                 image_only_indicator=image_only_indicator,
             )
 
+        assert self.upsamplers is not None
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
                 hidden_states = upsampler(hidden_states)
@@ -1590,7 +1612,7 @@ class UpBlockSpatioTemporal(nn.Module):
 
         return hidden_states
 
-
+# up_block_types
 class CrossAttnUpBlockSpatioTemporal(nn.Module):
     def __init__(self,
         in_channels: int,
@@ -2041,7 +2063,7 @@ class SpatioTemporalResBlock(nn.Module):
         self.time_mixer = AlphaBlender(alpha=merge_factor)
 
     def forward(self,
-        hidden_states: torch.Tensor,
+        hidden_states,
         temb = None,
         image_only_indicator = None,
     ):
@@ -2171,9 +2193,8 @@ class TemporalResnetBlock(nn.Module):
         padding = [k // 2 for k in kernel_size]
 
         self.norm1 = nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=eps, affine=True)
-        self.conv1 = nn.Conv3d(
-            in_channels,
-            out_channels,
+        # xxxx_debug
+        self.conv1 = nn.Conv3d(in_channels, out_channels,
             kernel_size=kernel_size,
             stride=1,
             padding=padding,
@@ -2187,9 +2208,7 @@ class TemporalResnetBlock(nn.Module):
         self.norm2 = nn.GroupNorm(num_groups=32, num_channels=out_channels, eps=eps, affine=True)
 
         self.dropout = nn.Dropout(0.0)
-        self.conv2 = nn.Conv3d(
-            out_channels,
-            out_channels,
+        self.conv2 = nn.Conv3d(out_channels, out_channels,
             kernel_size=kernel_size,
             stride=1,
             padding=padding,
@@ -2234,3 +2253,366 @@ class TemporalResnetBlock(nn.Module):
         output_tensor = input_tensor + hidden_states
 
         return output_tensor
+
+class Upsample2D(nn.Module):
+    def __init__(self,
+        channels = 1280,
+        use_conv: bool = True,
+        out_channels = 1280,
+    ):
+        super().__init__()
+        self.channels = channels
+        self.out_channels = out_channels or channels
+        self.use_conv = use_conv
+
+        assert use_conv == True
+        if use_conv:
+            conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, padding=1, bias=True)
+        else:
+            conv = None
+
+        self.conv = conv
+
+
+    def forward(self, hidden_states: torch.Tensor, output_size= None):
+        assert hidden_states.shape[1] == self.channels
+
+        # Cast to float32 to as 'upsample_nearest2d_out_frame' op does not support bfloat16
+        # TODO(Suraj): Remove this cast once the issue is fixed in PyTorch
+        # https://github.com/pytorch/pytorch/issues/86679
+        dtype = hidden_states.dtype
+        if dtype == torch.bfloat16:
+            hidden_states = hidden_states.to(torch.float32)
+
+        # upsample_nearest_nhwc fails with large batch sizes. see https://github.com/huggingface/diffusers/issues/984
+        if hidden_states.shape[0] >= 64:
+            hidden_states = hidden_states.contiguous()
+
+        # if `output_size` is passed we force the interpolation output
+        # size and do not make use of `scale_factor=2`
+        if output_size is None:
+            hidden_states = F.interpolate(hidden_states, scale_factor=2.0, mode="nearest")
+        else:
+            hidden_states = F.interpolate(hidden_states, size=output_size, mode="nearest")
+
+        # If the input is bfloat16, we cast back to bfloat16
+        if dtype == torch.bfloat16:
+            hidden_states = hidden_states.to(dtype)
+
+        # TODO(Suraj, Patrick) - clean up after weight dicts are correctly renamed
+        if self.use_conv: # True
+            hidden_states = self.conv(hidden_states)
+
+        return hidden_states
+
+
+class XFormersAttnProcessor:
+    r"""
+    Processor for implementing memory efficient attention using xFormers.
+    """
+    def __init__(self, attention_op = None):
+        self.attention_op = attention_op
+        assert self.attention_op == None
+
+    def __call__(self,
+        attn: Attention,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states = None,
+        attention_mask = None,
+        temb = None,
+        # *args,
+        # **kwargs,
+    ):
+        # encoder_hidden_states = None
+        # attention_mask = None
+        # temb = None
+        # args = ()
+        # kwargs = {}
+        # if len(args) > 0 or kwargs.get("scale", None) is not None: # False
+        #     deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
+        #     deprecate("scale", "1.0.0", deprecation_message)
+
+        residual = hidden_states
+
+        if attn.spatial_norm is not None:
+            pdb.set_trace()
+            hidden_states = attn.spatial_norm(hidden_states, temb)
+
+        input_ndim = hidden_states.ndim
+        # hidden_states.size() -- [4096, 16, 320]
+        if input_ndim == 4:
+            pdb.set_trace()
+            batch_size, channel, height, width = hidden_states.shape
+            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+
+        batch_size, key_tokens, _ = (
+            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
+        )
+
+        attention_mask = attn.prepare_attention_mask(attention_mask, key_tokens, batch_size)
+        if attention_mask is not None:
+            pdb.set_trace()
+            # expand our mask's singleton query_tokens dimension:
+            #   [batch*heads,            1, key_tokens] ->
+            #   [batch*heads, query_tokens, key_tokens]
+            # so that it can be added as a bias onto the attention scores that xformers computes:
+            #   [batch*heads, query_tokens, key_tokens]
+            # we do this explicitly because xformers doesn't broadcast the singleton dimension for us.
+            _, query_tokens, _ = hidden_states.shape
+            attention_mask = attention_mask.expand(-1, query_tokens, -1)
+
+        if attn.group_norm is not None:
+            hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
+
+        query = attn.to_q(hidden_states)
+
+        if encoder_hidden_states is None:
+            encoder_hidden_states = hidden_states
+        elif attn.norm_cross:
+            pdb.set_trace()
+            encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
+
+        key = attn.to_k(encoder_hidden_states)
+        value = attn.to_v(encoder_hidden_states)
+
+        query = attn.head_to_batch_dim(query).contiguous()
+        key = attn.head_to_batch_dim(key).contiguous()
+        value = attn.head_to_batch_dim(value).contiguous()
+
+        hidden_states = xformers.ops.memory_efficient_attention(
+            query, key, value, attn_bias=attention_mask, op=self.attention_op, scale=attn.scale
+        )
+        hidden_states = hidden_states.to(query.dtype)
+        hidden_states = attn.batch_to_head_dim(hidden_states)
+
+        # linear proj
+        hidden_states = attn.to_out[0](hidden_states)
+        # dropout
+        hidden_states = attn.to_out[1](hidden_states)
+
+        if input_ndim == 4:
+            pdb.set_trace()
+            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+
+        if attn.residual_connection:
+            pdb.set_trace()
+            hidden_states = hidden_states + residual
+
+        hidden_states = hidden_states / attn.rescale_output_factor
+
+        return hidden_states
+
+class AnimationAttnProcessor(nn.Module):
+    def __init__(self,
+        hidden_size=320,
+        # cross_attention_dim=None,
+        # rank=4,
+        # network_alpha=None,
+        # lora_scale=1.0,
+        ):
+        super().__init__()
+        # pdb.set_trace()
+        if not hasattr(F, "scaled_dot_product_attention"):
+            raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
+        # hidden_size = 320
+        # cross_attention_dim = None
+        # rank = 128
+        # network_alpha = None
+        # lora_scale = 1.0
+        # assert cross_attention_dim == None
+
+    def __call__(self,
+        attn,
+        hidden_states,
+        encoder_hidden_states=None,
+        attention_mask=None,
+        temb=None,
+    ):
+        # attention_mask = None
+        # temb = None
+        # (Pdb) attn
+        # Attention(
+        #   (to_q): Linear(in_features=320, out_features=320, bias=False)
+        #   (to_k): Linear(in_features=320, out_features=320, bias=False)
+        #   (to_v): Linear(in_features=320, out_features=320, bias=False)
+        #   (to_out): ModuleList(
+        #     (0): Linear(in_features=320, out_features=320, bias=True)
+        #     (1): Dropout(p=0.0, inplace=False)
+        #   )
+        #   (processor): AnimationAttnProcessor()
+        # )
+        # tensor [hidden_states] size: [16, 4096, 320], min: -0.878906, max: 1.689453, mean: 0.00032
+        assert hidden_states is not None
+        # assert encoder_hidden_states is not None
+        # assert attention_mask == None
+        assert temb == None
+
+        residual = hidden_states
+        input_ndim = hidden_states.ndim # 3
+
+        # tensor [encoder_hidden_states] size: [16, 4096, 320], min: -2.890625, max: 3.320312, mean: 0.006327
+        batch_size, sequence_length, _ = (
+            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
+        )
+
+        # attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+        # assert attention_mask == None
+
+        query = attn.to_q(hidden_states)
+
+        if encoder_hidden_states is None:
+            # ==> pdb.set_trace()
+            encoder_hidden_states = hidden_states
+
+        key = attn.to_k(encoder_hidden_states)
+        value = attn.to_v(encoder_hidden_states)
+
+        query = attn.head_to_batch_dim(query).contiguous()
+        key = attn.head_to_batch_dim(key).contiguous()
+        value = attn.head_to_batch_dim(value).contiguous()
+
+        # assert attention_mask == None
+        if is_xformers_available(): # True
+            ### xformers
+            hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=None)
+            hidden_states = hidden_states.to(query.dtype)
+        else:
+            attention_probs = attn.get_attention_scores(query, key, None)
+            hidden_states = torch.bmm(attention_probs, value)
+        hidden_states = attn.batch_to_head_dim(hidden_states)
+
+        # linear proj
+        # hidden_states = attn.to_out[0](hidden_states) + self.lora_scale * self.to_out_lora(hidden_states)
+        hidden_states = attn.to_out[0](hidden_states)
+        hidden_states = attn.to_out[1](hidden_states)
+
+        return hidden_states
+
+class AnimationIDAttnNormalizedProcessor(nn.Module):
+    def __init__(self,
+            hidden_size = 320,
+            cross_attention_dim=1024,
+            scale=1.0,
+            num_tokens=4):
+        super().__init__()
+
+        self.scale = scale
+        # self.id_to_k = nn.Linear(cross_attention_dim or hidden_size, hidden_size, bias=False)
+        # self.id_to_v = nn.Linear(cross_attention_dim or hidden_size, hidden_size, bias=False)
+        self.id_to_k = nn.Linear(cross_attention_dim, hidden_size, bias=False)
+        self.id_to_v = nn.Linear(cross_attention_dim, hidden_size, bias=False)
+
+        self.num_tokens = num_tokens
+        # self = AnimationIDAttnNormalizedProcessor(
+        #   (id_to_k): Linear(in_features=1024, out_features=320, bias=False)
+        #   (id_to_v): Linear(in_features=1024, out_features=320, bias=False)
+        # )
+
+    def __call__(self,
+            attn,
+            hidden_states,
+            encoder_hidden_states=None,
+            attention_mask=None,
+            temb=None,
+            scale=1.0,
+    ):
+        # (Pdb) attn
+        # Attention(
+        #   (to_q): Linear(in_features=320, out_features=320, bias=False)
+        #   (to_k): Linear(in_features=1024, out_features=320, bias=False)
+        #   (to_v): Linear(in_features=1024, out_features=320, bias=False)
+        #   (to_out): ModuleList(
+        #     (0): Linear(in_features=320, out_features=320, bias=True)
+        #     (1): Dropout(p=0.0, inplace=False)
+        #   )
+        #   (processor): AnimationIDAttnNormalizedProcessor(
+        #     (id_to_k): Linear(in_features=1024, out_features=320, bias=False)
+        #     (id_to_v): Linear(in_features=1024, out_features=320, bias=False)
+        #   )
+        # )
+        assert hidden_states is not None
+        assert encoder_hidden_states is not None
+        # assert attention_mask == None
+        assert temb == None
+        assert scale == 1.0
+        
+        residual = hidden_states
+        input_ndim = hidden_states.ndim
+
+        batch_size, sequence_length, _ = (
+            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
+        )
+
+        # assert attention_mask == None
+        # attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+        # assert attention_mask == None
+
+        query = attn.to_q(hidden_states)
+
+        encoder_hidden_states = encoder_hidden_states.to(hidden_states.dtype)
+
+        end_pos = encoder_hidden_states.shape[1] - self.num_tokens
+        encoder_hidden_states, ip_hidden_states = (
+            encoder_hidden_states[:, :end_pos, :],
+            encoder_hidden_states[:, end_pos:, :],
+        )
+
+        key = attn.to_k(encoder_hidden_states)
+        value = attn.to_v(encoder_hidden_states)
+
+        inner_dim = key.shape[-1]
+        head_dim = inner_dim // attn.heads
+
+        query = attn.head_to_batch_dim(query).contiguous()
+        key = attn.head_to_batch_dim(key).contiguous()
+        value = attn.head_to_batch_dim(value).contiguous()
+
+        key = key.to(query.dtype)
+        value = value.to(query.dtype)
+
+        # assert attention_mask == None
+        if is_xformers_available(): # True
+            ### xformers
+            hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=None)
+            hidden_states = hidden_states.to(query.dtype)
+        else:
+            hidden_states = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0,
+                                                           is_causal=False)
+            hidden_states = hidden_states.to(query.dtype)
+
+        hidden_states = attn.batch_to_head_dim(hidden_states)
+
+        ip_key = self.id_to_k(ip_hidden_states)
+        ip_value = self.id_to_v(ip_hidden_states)
+
+        ip_key = attn.head_to_batch_dim(ip_key).contiguous()
+        ip_value = attn.head_to_batch_dim(ip_value).contiguous()
+        ip_key = ip_key.to(query.dtype)
+        ip_value = ip_value.to(query.dtype)
+
+        if is_xformers_available(): # True
+            ### xformers
+            ip_hidden_states = xformers.ops.memory_efficient_attention(query, ip_key, ip_value, attn_bias=None)
+            ip_hidden_states = ip_hidden_states.to(query.dtype)
+        else:
+            ip_hidden_states = F.scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0,
+                                                              is_causal=False)
+            ip_hidden_states = ip_hidden_states.to(query.dtype)
+
+        ip_hidden_states = attn.batch_to_head_dim(ip_hidden_states)
+        mean_latents, std_latents = torch.mean(hidden_states, dim=(1, 2), keepdim=True), torch.std(hidden_states, dim=(1, 2), keepdim=True)
+        mean_ip, std_ip = torch.mean(ip_hidden_states, dim=(1, 2), keepdim=True), torch.std(ip_hidden_states, dim=(1, 2), keepdim=True)
+        ip_hidden_states = (ip_hidden_states - mean_ip) * (std_latents / (std_ip + 1e-5)) + mean_latents
+        hidden_states = hidden_states + self.scale * ip_hidden_states
+        hidden_states = attn.to_out[0](hidden_states)
+        hidden_states = attn.to_out[1](hidden_states)
+
+        return hidden_states
+
+
+
+if __name__ == "__main__":
+    # args.pretrained_model_name_or_path === 'checkpoints/SVD/stable-video-diffusion-img2vid-xt'
+    unet = UNetSpatioTemporalConditionModel.from_pretrained(
+        'checkpoints/SVD/stable-video-diffusion-img2vid-xt', subfolder="unet", low_cpu_mem_usage=True)
+    print(unet)

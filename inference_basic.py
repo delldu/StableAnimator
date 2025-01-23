@@ -3,21 +3,26 @@ import os
 import cv2
 import numpy as np
 from PIL import Image
-from diffusers.models.attention_processor import XFormersAttnProcessor
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
 import torch
-# from diffusers import AutoencoderKLTemporalDecoder, EulerDiscreteScheduler
 from diffusers import EulerDiscreteScheduler
 
 from animation.modules.vae import AutoencoderKLTemporalDecoder
-from animation.modules.unet import AnimationAttnProcessor
-from animation.modules.unet import AnimationIDAttnNormalizedProcessor
+from animation.modules.unet import (
+    AnimationAttnProcessor, 
+    AnimationIDAttnNormalizedProcessor, 
+    XFormersAttnProcessor,
+    UNetSpatioTemporalConditionModel,
+)
+from animation.pipelines.inference_pipeline_animation import (
+    InferenceAnimationPipeline,
+)
+
 from animation.modules.face_model import FaceModel
 from animation.modules.id_encoder import FusionFaceId
 from animation.modules.pose_net import PoseNet
-from animation.modules.unet import UNetSpatioTemporalConditionModel
-from animation.pipelines.inference_pipeline_animation import InferenceAnimationPipeline
 import random
+
 import pdb
 import todos
 
@@ -62,16 +67,9 @@ def save_frames_as_mp4(frames, output_mp4_path, fps):
 def export_to_gif(frames, output_gif_path, fps):
     """
     Export a list of frames to a GIF.
-
-    Args:
-    - frames (list): List of frames (as numpy arrays or PIL Image objects).
-    - output_gif_path (str): Path to save the output GIF.
-    - duration_ms (int): Duration of each frame in milliseconds.
-
     """
     # Convert numpy arrays to PIL Images if needed
-    pil_frames = [Image.fromarray(frame) if isinstance(
-        frame, np.ndarray) else frame for frame in frames]
+    pil_frames = [Image.fromarray(frame) if isinstance(frame, np.ndarray) else frame for frame in frames]
 
     pil_frames[0].save(output_gif_path.replace('.mp4', '.gif'),
                        format='GIF',
@@ -348,7 +346,9 @@ if __name__ == "__main__":
     #     'mid_block.attentions.0.temporal_transformer_blocks.0.attn2.processor'])
 
     for name in unet.attn_processors.keys():
-        if "transformer_blocks" in name and "temporal_transformer_blocks" not in name:
+        if "temporal_transformer_blocks" in name:
+            attn_procs[name] = XFormersAttnProcessor()
+        elif "transformer_blocks" in name:
             # name -- 'down_blocks.0.attentions.0.transformer_blocks.0.attn1.processor'
             cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
             if name.startswith("mid_block"):
@@ -362,7 +362,7 @@ if __name__ == "__main__":
             if cross_attention_dim is None:
                 # name -- 'down_blocks.0.attentions.0.transformer_blocks.0.attn1.processor'
                 # hidden_size -- 320, cross_attention_dim === None
-                attn_procs[name] = AnimationAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=lora_rank)
+                attn_procs[name] = AnimationAttnProcessor(hidden_size=hidden_size)
             else:
                 # name -- 'down_blocks.0.attentions.0.transformer_blocks.0.attn2.processor'
                 layer_name = name.split(".processor")[0]
@@ -370,22 +370,8 @@ if __name__ == "__main__":
                     "to_k_ip.weight": unet_svd[layer_name + ".to_k.weight"],
                     "to_v_ip.weight": unet_svd[layer_name + ".to_v.weight"],
                 }
-                attn_procs[name] = AnimationIDAttnNormalizedProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=lora_rank)
+                attn_procs[name] = AnimationIDAttnNormalizedProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim)
                 attn_procs[name].load_state_dict(weights, strict=False)
-        elif "temporal_transformer_blocks" in name:
-            # name -- 'down_blocks.0.attentions.0.temporal_transformer_blocks.0.attn1.processor'
-            # cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
-            if name.startswith("mid_block"):
-                hidden_size = unet.config.block_out_channels[-1]
-            elif name.startswith("up_blocks"):
-                block_id = int(name[len("up_blocks.")])
-                hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
-            elif name.startswith("down_blocks"):
-                block_id = int(name[len("down_blocks.")])
-                hidden_size = unet.config.block_out_channels[block_id]
-
-            attn_procs[name] = XFormersAttnProcessor()
-
     # (Pdb) attn_procs.keys()
     # dict_keys(['down_blocks.0.attentions.0.transformer_blocks.0.attn1.processor', 
     #     'down_blocks.0.attentions.0.transformer_blocks.0.attn2.processor', 
