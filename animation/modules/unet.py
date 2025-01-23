@@ -1471,7 +1471,7 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
                         out_channels,
                         use_conv=True,
                         out_channels=out_channels,
-                        padding=1,
+                        # padding=1,
                         name="op",
                     )
                 ]
@@ -1928,47 +1928,22 @@ class Downsample2D(nn.Module):
         use_conv: bool = True,
         out_channels = None,
         name: str = "conv",
-
-        padding: int = 1,
-        kernel_size=3,
-        norm_type=None,
-        eps=None,
     ):
         super().__init__()
         assert use_conv == True
 
-        self.channels = channels
-        self.out_channels = out_channels or channels
-        self.use_conv = use_conv
-        # self.padding = padding
-        # self.name = name
+        self.channels = channels # !!!
+        out_channels = out_channels or channels
 
+        self.conv = nn.Conv2d(channels, out_channels, kernel_size=3, stride=2, padding=1, bias=True)
 
-        conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, stride=2, padding=1, bias=True)
-        # # TODO(Suraj, Patrick) - clean up after weight dicts are correctly renamed
-        # if name == "conv":
-        #     self.Conv2d_0 = conv
-        #     self.conv = conv
-        # elif name == "Conv2d_0":
-        #     self.conv = conv
-        # else:
-        #     self.conv = conv
-        self.conv = conv
-
-    def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
-        # if len(args) > 0 or kwargs.get("scale", None) is not None:
-        #     deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
-        #     deprecate("scale", "1.0.0", deprecation_message)
+    def forward(self, hidden_states):
         assert hidden_states.shape[1] == self.channels
-
         # if self.use_conv and self.padding == 0: # False
         #     pad = (0, 1, 0, 1)
         #     hidden_states = F.pad(hidden_states, pad, mode="constant", value=0)
 
-        assert hidden_states.shape[1] == self.channels
-
         hidden_states = self.conv(hidden_states)
-
         return hidden_states
 
 
@@ -2033,15 +2008,19 @@ class TemporalConvLayer(nn.Module):
 
 
 class SpatioTemporalResBlock(nn.Module):
+    """
+        in_channels=in_channels,
+        out_channels=in_channels,
+        temb_channels=temb_channels,
+        eps=1e-5,
+    """
     def __init__(self,
         in_channels: int,
         out_channels = None,
         temb_channels: int = 512,
         eps: float = 1e-6,
-        temporal_eps = None,
+
         merge_factor: float = 0.5,
-        merge_strategy="learned_with_images",
-        switch_spatial_to_temporal_mix: bool = False,
     ):
         super().__init__()
 
@@ -2053,17 +2032,13 @@ class SpatioTemporalResBlock(nn.Module):
         )
 
         self.temporal_res_block = TemporalResnetBlock(
-            in_channels=out_channels if out_channels is not None else in_channels,
-            out_channels=out_channels if out_channels is not None else in_channels,
+            in_channels=out_channels,  # if out_channels is not None else in_channels,
+            out_channels=out_channels,  #if out_channels is not None else in_channels,
             temb_channels=temb_channels,
-            eps=temporal_eps if temporal_eps is not None else eps,
+            eps= eps,
         )
 
-        self.time_mixer = AlphaBlender(
-            alpha=merge_factor,
-            # merge_strategy=merge_strategy,
-            # switch_spatial_to_temporal_mix=switch_spatial_to_temporal_mix,
-        )
+        self.time_mixer = AlphaBlender(alpha=merge_factor)
 
     def forward(self,
         hidden_states: torch.Tensor,
