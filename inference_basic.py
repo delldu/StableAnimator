@@ -10,8 +10,8 @@ import torch
 from diffusers import EulerDiscreteScheduler
 
 from animation.modules.vae import AutoencoderKLTemporalDecoder
-from animation.modules.attention_processor import AnimationAttnProcessor
-from animation.modules.attention_processor_normalized import AnimationIDAttnNormalizedProcessor
+from animation.modules.unet import AnimationAttnProcessor
+from animation.modules.unet import AnimationIDAttnNormalizedProcessor
 from animation.modules.face_model import FaceModel
 from animation.modules.id_encoder import FusionFaceId
 from animation.modules.pose_net import PoseNet
@@ -373,7 +373,7 @@ if __name__ == "__main__":
                 attn_procs[name] = AnimationIDAttnNormalizedProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=lora_rank)
                 attn_procs[name].load_state_dict(weights, strict=False)
         elif "temporal_transformer_blocks" in name:
-            #  name -- 'down_blocks.0.attentions.0.temporal_transformer_blocks.0.attn1.processor'
+            # name -- 'down_blocks.0.attentions.0.temporal_transformer_blocks.0.attn1.processor'
             # cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
             if name.startswith("mid_block"):
                 hidden_size = unet.config.block_out_channels[-1]
@@ -383,10 +383,7 @@ if __name__ == "__main__":
             elif name.startswith("down_blocks"):
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = unet.config.block_out_channels[block_id]
-            # if cross_attention_dim is None:
-            #     attn_procs[name] = XFormersAttnProcessor()
-            # else:
-            #     attn_procs[name] = XFormersAttnProcessor()
+
             attn_procs[name] = XFormersAttnProcessor()
 
     # (Pdb) attn_procs.keys()

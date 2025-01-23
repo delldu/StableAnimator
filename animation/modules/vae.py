@@ -12,29 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import inspect
-
 from collections import OrderedDict
-from functools import partial
-from typing import Dict, Optional, Tuple, Union, Any, Callable
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.utils.accelerate_utils import apply_forward_hook
-from diffusers.models.attention_processor import CROSS_ATTENTION_PROCESSORS, AttentionProcessor, AttnProcessor
 from diffusers.models.modeling_utils import ModelMixin
-
-from dataclasses import dataclass, fields, is_dataclass
-
 from diffusers.utils.torch_utils import randn_tensor
-
-from diffusers.utils import deprecate, is_torch_version, logging
-
-from diffusers.models.activations import get_activation
-from diffusers.utils.import_utils import is_peft_available, is_torch_available, is_transformers_available
+from diffusers.utils import is_torch_version, logging
+from diffusers.utils.import_utils import is_torch_available
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -51,12 +39,12 @@ class Attention(nn.Module):
         dim_head: int = 64,
         bias: bool = True,
         upcast_softmax: bool = False,
-        norm_num_groups: Optional[int] = None,
-        spatial_norm_dim: Optional[int] = None,
+        norm_num_groups = None,
+        spatial_norm_dim = None,
         eps: float = 1e-6,
         residual_connection: bool = True,
 
-        processor: Optional["AttnProcessor"] = None,
+        processor = None,
     ):
         super().__init__()
 
@@ -97,13 +85,13 @@ class Attention(nn.Module):
             processor = AttnProcessor2_0()
         self.set_processor(processor)
 
-    def set_processor(self, processor: "AttnProcessor") -> None:
+    def set_processor(self, processor):
         self.processor = processor
 
     def forward(self,
         hidden_states: torch.Tensor,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
+        encoder_hidden_states = None,
+        attention_mask = None,
         **cross_attention_kwargs,
     ):
         # encoder_hidden_states = None
@@ -174,14 +162,14 @@ class BaseOutput(OrderedDict):
     def update(self, *args, **kwargs):
         raise Exception(f"You cannot use ``update`` on a {self.__class__.__name__} instance.")
 
-    def __getitem__(self, k: Any) -> Any:
+    def __getitem__(self, k):
         if isinstance(k, str):
             inner_dict = dict(self.items())
             return inner_dict[k]
         else:
             return self.to_tuple()[k]
 
-    def __setattr__(self, name: Any, value: Any) -> None:
+    def __setattr__(self, name, value):
         if name in self.keys() and value is not None:
             # Don't call self.__setitem__ to avoid recursion errors
             super().__setitem__(name, value)
@@ -193,14 +181,8 @@ class BaseOutput(OrderedDict):
         # Don't call self.__setattr__ to avoid recursion errors
         super().__setattr__(key, value)
 
-    def __reduce__(self):
-        if not is_dataclass(self):
-            return super().__reduce__()
-        callable, _args, *remaining = super().__reduce__()
-        args = tuple(getattr(self, field.name) for field in fields(self))
-        return callable, args, *remaining
 
-    def to_tuple(self) -> Tuple[Any, ...]:
+    def to_tuple(self):
         """
         Convert self to a tuple containing all the attributes/keys that are not `None`.
         """
@@ -226,7 +208,7 @@ class DiagonalGaussianDistribution(object):
             )
 
 
-    def sample(self, generator: Optional[torch.Generator] = None) -> torch.Tensor:
+    def sample(self, generator = None):
         # make sure sample is on the same device as the parameters and has same dtype
         sample = randn_tensor(
             self.mean.shape,
@@ -241,19 +223,16 @@ class DiagonalGaussianDistribution(object):
     def mode(self) -> torch.Tensor:
         return self.mean
 
-@dataclass
 class AutoencoderKLOutput(BaseOutput):
     latent_dist: "DiagonalGaussianDistribution"  # noqa: F821
 
 
-@dataclass
 class Transformer2DModelOutput(BaseOutput):
     sample: "torch.Tensor"  # noqa: F821
 
-@dataclass
 class DecoderOutput(BaseOutput):
     sample: torch.Tensor
-    commit_loss: Optional[torch.FloatTensor] = None
+    commit_loss = None
 
 # --------------------
 class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
@@ -299,7 +278,7 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
         self.tile_latent_min_size = int(sample_size / (2 ** (len(block_out_channels) - 1))) # 96
         self.tile_overlap_factor = 0.25
 
-    @apply_forward_hook
+    # @apply_forward_hook
     def encode(self, x: torch.Tensor, return_dict: bool = True):
         # todos.debug.output_var("encode x", x)
         h = self.encoder(x)
@@ -313,7 +292,7 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
 
         return AutoencoderKLOutput(latent_dist=posterior)
 
-    @apply_forward_hook
+    # @apply_forward_hook
     def decode(self,
         z: torch.Tensor,
         num_frames: int,
@@ -337,9 +316,9 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
         sample: torch.Tensor,
         sample_posterior: bool = False,
         return_dict: bool = True,
-        generator: Optional[torch.Generator] = None,
+        generator = None,
         num_frames: int = 1,
-    ) -> Union[DecoderOutput, torch.Tensor]:
+    ):
         r""" useless ... """
         x = sample
         posterior = self.encode(x).latent_dist
@@ -415,7 +394,7 @@ class UNetMidBlock2D(nn.Module):
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
 
-    def forward(self, hidden_states: torch.Tensor, temb: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, temb = None):
         assert temb == None
         # todos.debug.output_var("hidden_states1", hidden_states)
         # todos.debug.output_var("temb", temb)
@@ -456,7 +435,7 @@ class TemporalDecoder(nn.Module):
     def __init__(self,
         in_channels: int = 4,
         out_channels: int = 3,
-        block_out_channels: Tuple[int] = (128, 256, 512, 512),
+        block_out_channels = (128, 256, 512, 512),
         layers_per_block: int = 2,
     ):
         super().__init__()
@@ -623,8 +602,7 @@ class Encoder(nn.Module):
 
 # !!! once -------------------------------------
 class MidBlockTemporalDecoder(nn.Module):
-    def __init__(
-        self,
+    def __init__(self,
         in_channels: int,
         out_channels: int,
         attention_head_dim: int = 512,
@@ -798,7 +776,7 @@ class Downsample2D(nn.Module):
     def __init__(self,
         channels: int,
         use_conv: bool = True,
-        out_channels: Optional[int] = None,
+        out_channels = None,
         padding: int = 1,
     ):
         super().__init__()
@@ -834,7 +812,7 @@ class Upsample2D(nn.Module):
     def __init__(self,
         channels: int,
         use_conv: bool = False,
-        out_channels: Optional[int] = None,
+        out_channels = None,
     ):
         super().__init__()
         self.channels = channels
@@ -887,7 +865,7 @@ class ResnetBlock2D(nn.Module):
     def __init__(self,
         *,
         in_channels: int,
-        out_channels: Optional[int] = None,
+        out_channels = None,
         groups: int = 32,
         pre_norm: bool = True,
         eps: float = 1e-6,
@@ -907,7 +885,7 @@ class ResnetBlock2D(nn.Module):
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.norm2 = nn.GroupNorm(num_groups=groups, num_channels=out_channels, eps=eps, affine=True)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.nonlinearity = get_activation(non_linearity)
+        self.nonlinearity = nn.SiLU() # get_activation(non_linearity)
         self.use_in_shortcut = self.in_channels != out_channels
 
         self.conv_shortcut = None
@@ -947,7 +925,7 @@ class ResnetBlock2D(nn.Module):
 class TemporalResnetBlock(nn.Module):
     def __init__(self,
         in_channels: int,
-        out_channels: Optional[int] = None,
+        out_channels = None,
         eps: float = 1e-6,
     ):
         super().__init__()
@@ -977,7 +955,7 @@ class TemporalResnetBlock(nn.Module):
             padding=padding,
         )
 
-        self.nonlinearity = get_activation("silu")
+        self.nonlinearity = nn.SiLU() # get_activation("silu")
 
         self.use_in_shortcut = self.in_channels != out_channels
         if self.use_in_shortcut:
@@ -1034,9 +1012,9 @@ class SpatioTemporalResBlock(nn.Module):
         self.time_mixer = AlphaBlender(alpha=merge_factor)
 
     def forward(self,
-        hidden_states: torch.Tensor,
-        temb: Optional[torch.Tensor] = None,
-        image_only_indicator: Optional[torch.Tensor] = None,
+        hidden_states,
+        temb = None,
+        image_only_indicator = None,
     ):
         num_frames = image_only_indicator.shape[-1]
         hidden_states = self.spatial_res_block(hidden_states, temb)
@@ -1073,7 +1051,7 @@ class AlphaBlender(nn.Module):
     def forward(self,
         x_spatial: torch.Tensor,
         x_temporal: torch.Tensor,
-        image_only_indicator: Optional[torch.Tensor] = None,
+        image_only_indicator = None,
     ):
         alpha = torch.sigmoid(self.mix_factor)
         alpha = alpha.to(x_spatial.dtype)
@@ -1091,9 +1069,9 @@ class AttnProcessor2_0:
     def __call__(self,
         attn: Attention,
         hidden_states: torch.Tensor,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        temb: Optional[torch.Tensor] = None,
+        encoder_hidden_states = None,
+        attention_mask = None,
+        temb = None,
     ):
         residual = hidden_states
         input_ndim = hidden_states.ndim

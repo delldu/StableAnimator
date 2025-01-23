@@ -65,8 +65,7 @@ def FeedForward(dim, mult=4):
     )
 
 class FacePerceiver(torch.nn.Module):
-    def __init__(
-        self,
+    def __init__(self,
         dim=1024,
         depth=4,
         dim_head=64,
