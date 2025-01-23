@@ -1917,91 +1917,53 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
 
 class Downsample2D(nn.Module):
     """A 2D downsampling layer with an optional convolution.
-
-    Parameters:
-        channels (`int`):
-            number of channels in the inputs and outputs.
-        use_conv (`bool`, default `False`):
-            option to use a convolution.
-        out_channels (`int`, optional):
-            number of output channels. Defaults to `channels`.
-        padding (`int`, default `1`):
-            padding for the convolution.
-        name (`str`, default `conv`):
-            name of the downsampling 2D layer.
+                        out_channels,
+                        use_conv=True,
+                        out_channels=out_channels,
+                        name="op",
     """
 
-    def __init__(
-        self,
+    def __init__(self,
         channels: int,
-        use_conv: bool = False,
+        use_conv: bool = True,
         out_channels = None,
-        padding: int = 1,
         name: str = "conv",
+
+        padding: int = 1,
         kernel_size=3,
         norm_type=None,
         eps=None,
-        elementwise_affine=None,
-        bias=True,
     ):
         super().__init__()
-        # channels = 128
-        # use_conv = True
-        # out_channels = 128
-        # padding = 0
-        # name = 'op'
-        # kernel_size = 3
-        # norm_type = None
-        # eps = None
-        # elementwise_affine = None
-        # bias = True
+        assert use_conv == True
 
         self.channels = channels
         self.out_channels = out_channels or channels
         self.use_conv = use_conv
-        self.padding = padding
-        stride = 2
-        self.name = name
+        # self.padding = padding
+        # self.name = name
 
-        if norm_type == "ln_norm":
-            self.norm = nn.LayerNorm(channels, eps, elementwise_affine)
-        elif norm_type == "rms_norm":
-            self.norm = RMSNorm(channels, eps, elementwise_affine)
-        elif norm_type is None:
-            self.norm = None
-        else:
-            raise ValueError(f"unknown norm_type: {norm_type}")
 
-        if use_conv:
-            conv = nn.Conv2d(
-                self.channels, self.out_channels, kernel_size=kernel_size, stride=stride, padding=padding, bias=bias
-            )
-        else:
-            assert self.channels == self.out_channels
-            conv = nn.AvgPool2d(kernel_size=stride, stride=stride)
-
-        # TODO(Suraj, Patrick) - clean up after weight dicts are correctly renamed
-        if name == "conv":
-            self.Conv2d_0 = conv
-            self.conv = conv
-        elif name == "Conv2d_0":
-            self.conv = conv
-        else:
-            self.conv = conv
-        # pdb.set_trace()
+        conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, stride=2, padding=1, bias=True)
+        # # TODO(Suraj, Patrick) - clean up after weight dicts are correctly renamed
+        # if name == "conv":
+        #     self.Conv2d_0 = conv
+        #     self.conv = conv
+        # elif name == "Conv2d_0":
+        #     self.conv = conv
+        # else:
+        #     self.conv = conv
+        self.conv = conv
 
     def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
-        if len(args) > 0 or kwargs.get("scale", None) is not None:
-            deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
-            deprecate("scale", "1.0.0", deprecation_message)
+        # if len(args) > 0 or kwargs.get("scale", None) is not None:
+        #     deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
+        #     deprecate("scale", "1.0.0", deprecation_message)
         assert hidden_states.shape[1] == self.channels
 
-        if self.norm is not None:
-            hidden_states = self.norm(hidden_states.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-
-        if self.use_conv and self.padding == 0:
-            pad = (0, 1, 0, 1)
-            hidden_states = F.pad(hidden_states, pad, mode="constant", value=0)
+        # if self.use_conv and self.padding == 0: # False
+        #     pad = (0, 1, 0, 1)
+        #     hidden_states = F.pad(hidden_states, pad, mode="constant", value=0)
 
         assert hidden_states.shape[1] == self.channels
 
@@ -2147,7 +2109,6 @@ class ResnetBlock2D(nn.Module):
         temb_channels: int = 512,
         eps: float = 1e-6,
 
-        conv_shortcut: bool = False,
         dropout: float = 0.0,
         groups: int = 32,
     ):
@@ -2158,7 +2119,6 @@ class ResnetBlock2D(nn.Module):
         self.out_channels = out_channels
 
         self.norm1 = nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)
-
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
 
         if temb_channels is not None:
@@ -2167,21 +2127,15 @@ class ResnetBlock2D(nn.Module):
             self.time_emb_proj = None
 
         self.norm2 = nn.GroupNorm(num_groups=groups, num_channels=out_channels, eps=eps, affine=True)
-
         self.dropout = nn.Dropout(dropout)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-
-        self.nonlinearity = nn.SiLU() # get_activation(non_linearity)
-
-        self.upsample = self.downsample = None
+        self.nonlinearity = nn.SiLU()
 
         self.use_in_shortcut = self.in_channels != out_channels
 
         self.conv_shortcut = None
         if self.use_in_shortcut:
-            self.conv_shortcut = nn.Conv2d(
-                in_channels,
-                out_channels,
+            self.conv_shortcut = nn.Conv2d(in_channels, out_channels,
                 kernel_size=1,
                 stride=1,
                 padding=0,
@@ -2198,18 +2152,6 @@ class ResnetBlock2D(nn.Module):
 
         hidden_states = self.norm1(hidden_states)
         hidden_states = self.nonlinearity(hidden_states)
-
-        if self.upsample is not None:
-            # upsample_nearest_nhwc fails with large batch sizes. see https://github.com/huggingface/diffusers/issues/984
-            if hidden_states.shape[0] >= 64:
-                input_tensor = input_tensor.contiguous()
-                hidden_states = hidden_states.contiguous()
-            input_tensor = self.upsample(input_tensor)
-            hidden_states = self.upsample(hidden_states)
-        elif self.downsample is not None:
-            input_tensor = self.downsample(input_tensor)
-            hidden_states = self.downsample(hidden_states)
-
         hidden_states = self.conv1(hidden_states)
 
         if self.time_emb_proj is not None:
