@@ -500,7 +500,7 @@ class AlphaBlender(nn.Module):
 class BasicTransformerBlock(nn.Module):
     r"""
     A basic Transformer block.
-        inner_dim,
+        hidden_size,
         num_attention_heads,
         attention_head_dim,
         cross_attention_dim=cross_attention_dim,
@@ -551,8 +551,6 @@ class BasicTransformerBlock(nn.Module):
     ) -> torch.Tensor:
         # encoder_attention_mask = None
         # timestep = None
-        # print(f"self.attn1.inner_dim = {self.attn1.inner_dim}, self.attn1.processor.hidden_size = {self.attn1.processor.hidden_size}")
-        # print(f"self.attn2.inner_dim = {self.attn2.inner_dim}, self.attn2.processor.hidden_size = {self.attn2.processor.hidden_size}")
 
         # Notice that normalization is always applied before the real computation in the following blocks.
         # 1. Self-Attention
@@ -562,7 +560,7 @@ class BasicTransformerBlock(nn.Module):
         attn_output = self.attn1(
             norm_hidden_states,
             encoder_hidden_states=None, #encoder_hidden_states if self.only_cross_attention else None,
-            attention_mask=attention_mask,
+            # attention_mask=attention_mask,
         )
 
         hidden_states = attn_output + hidden_states
@@ -572,7 +570,7 @@ class BasicTransformerBlock(nn.Module):
         attn_output = self.attn2(
             norm_hidden_states,
             encoder_hidden_states=encoder_hidden_states,
-            attention_mask=None,
+            # attention_mask=None,
         )
         hidden_states = attn_output + hidden_states
 
@@ -597,19 +595,19 @@ class TransformerSpatioTemporalModel(nn.Module):
     ):
         super().__init__()
 
-        inner_dim = num_attention_heads * attention_head_dim # 320
-        self.inner_dim = inner_dim
+        hidden_size = num_attention_heads * attention_head_dim # 320
+        self.hidden_size = hidden_size
 
         # 2. Define input layers
         self.norm = nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=1e-6)
-        self.proj_in = nn.Linear(in_channels, inner_dim)
+        self.proj_in = nn.Linear(in_channels, hidden_size)
 
         # 3. Define transformers blocks
         # AnimationAttnProcessor, AnimationIDAttnNormalizedProcessor
         self.transformer_blocks = nn.ModuleList(
             [
                 BasicTransformerBlock(
-                    inner_dim,
+                    hidden_size,
                     num_attention_heads,
                     attention_head_dim,
                     cross_attention_dim=cross_attention_dim,
@@ -622,8 +620,8 @@ class TransformerSpatioTemporalModel(nn.Module):
         self.temporal_transformer_blocks = nn.ModuleList(
             [
                 TemporalBasicTransformerBlock(
-                    inner_dim,
-                    inner_dim,
+                    hidden_size,
+                    hidden_size,
                     num_attention_heads,
                     attention_head_dim,
                     cross_attention_dim=cross_attention_dim,
@@ -643,7 +641,7 @@ class TransformerSpatioTemporalModel(nn.Module):
         self.time_mixer = AlphaBlender(alpha=0.5)
 
         # 4. Define output layers
-        self.proj_out = nn.Linear(inner_dim, in_channels)
+        self.proj_out = nn.Linear(hidden_size, in_channels)
         # self.proj_out -- Linear(in_features=320, out_features=320, bias=True)
 
         self.gradient_checkpointing = False
@@ -684,10 +682,10 @@ class TransformerSpatioTemporalModel(nn.Module):
 
         residual = hidden_states
         hidden_states = self.norm(hidden_states)
-        inner_dim = hidden_states.shape[1]
+        hidden_size = hidden_states.shape[1]
 
         # tensor [hidden_states1] size: [16, 320, 64, 64], min: -2.525391, max: 2.4375, mean: -0.013387
-        hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(batch_frames, height * width, inner_dim)
+        hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(batch_frames, height * width, hidden_size)
         # tensor [hidden_states2] size: [16, 4096, 320], min: -2.525391, max: 2.4375, mean: -0.013387
 
         hidden_states = self.proj_in(hidden_states)
@@ -728,7 +726,7 @@ class TransformerSpatioTemporalModel(nn.Module):
         # 3. Output
         hidden_states = self.proj_out(hidden_states)
         # tensor [hidden_states3] size: [16, 4096, 320], min: -28.609375, max: 41.75, mean: -1.081215
-        hidden_states = hidden_states.reshape(batch_frames, height, width, inner_dim).permute(0, 3, 1, 2).contiguous()
+        hidden_states = hidden_states.reshape(batch_frames, height, width, hidden_size).permute(0, 3, 1, 2).contiguous()
         # tensor [hidden_states4] size: [16, 320, 64, 64], min: -28.609375, max: 41.75, mean: -1.081215
 
         output = hidden_states + residual
@@ -759,9 +757,9 @@ class Attention(nn.Module):
         super().__init__()
         # assert processor == None
 
-        self.inner_dim = dim_head * heads # hidden_size ???
+        self.hidden_size = dim_head * heads # hidden_size ???
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
-        self.rescale_output_factor = 1.0
+        # self.rescale_output_factor = 1.0
         self.residual_connection = False
         self.out_dim = query_dim
 
@@ -777,12 +775,12 @@ class Attention(nn.Module):
 
         # cross_attention_dim == 1024 or None
         self.norm_cross = None
-        self.to_q = nn.Linear(query_dim, self.inner_dim, bias=False)
-        self.to_k = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=False)
-        self.to_v = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=False)
+        self.to_q = nn.Linear(query_dim, self.hidden_size, bias=False)
+        self.to_k = nn.Linear(self.cross_attention_dim, self.hidden_size, bias=False)
+        self.to_v = nn.Linear(self.cross_attention_dim, self.hidden_size, bias=False)
 
         self.to_out = nn.ModuleList([])
-        self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=True))
+        self.to_out.append(nn.Linear(self.hidden_size, self.out_dim, bias=True))
         self.to_out.append(nn.Dropout(dropout))
 
         # set attention processor
@@ -803,7 +801,7 @@ class Attention(nn.Module):
     def forward(self,
         hidden_states: torch.Tensor,
         encoder_hidden_states = None,
-        attention_mask = None,
+        # attention_mask = None,
         # **cross_attention_kwargs,
     ) -> torch.Tensor:
         #
@@ -817,7 +815,7 @@ class Attention(nn.Module):
         return self.processor(self,
             hidden_states,
             encoder_hidden_states=encoder_hidden_states,
-            attention_mask=attention_mask,
+            # attention_mask=attention_mask,
         )
 
     def batch_to_head_dim(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -906,14 +904,14 @@ class FeedForward(nn.Module):
         dropout = 0.0,
     ):
         super().__init__()
-        inner_dim = int(dim * mult) # 1280
+        hidden_size = int(dim * mult) # 1280
         dim_out = dim_out if dim_out is not None else dim
 
-        act_fn = GEGLU(dim, inner_dim, bias=True)
+        act_fn = GEGLU(dim, hidden_size, bias=True)
         self.net = nn.ModuleList([])
         self.net.append(act_fn)
         self.net.append(nn.Dropout(dropout))
-        self.net.append(nn.Linear(inner_dim, dim_out, bias=True))
+        self.net.append(nn.Linear(hidden_size, dim_out, bias=True))
         # FF as used in Vision Transformer, MLP-Mixer, etc. have a final dropout
         # (Pdb) self
         # FeedForward(
@@ -954,8 +952,8 @@ class TemporalBasicTransformerBlock(nn.Module):
     r"""
     A basic Transformer block for video like data.
     Parameters:
-        inner_dim,
-        inner_dim,
+        hidden_size,
+        hidden_size,
         num_attention_heads,
         attention_head_dim,
         cross_attention_dim=cross_attention_dim,
@@ -1987,19 +1985,15 @@ class XFormersAttnProcessor:
         attn: Attention,
         hidden_states: torch.Tensor,
         encoder_hidden_states = None,
-        attention_mask = None,
-        temb = None,
-        # *args,
-        # **kwargs,
+        # attention_mask = None,
+        # temb = None,
     ):
-        # encoder_hidden_states = None
-        # attention_mask = None
-        # temb = None
-        # args = ()
-        # kwargs = {}
-        # if len(args) > 0 or kwargs.get("scale", None) is not None: # False
-        #     deprecation_message = "The `scale` argument is deprecated and will be ignored. Please remove it, as passing it will raise an error in the future. `scale` should directly be passed while calling the underlying pipeline component i.e., via `cross_attention_kwargs`."
-        #     deprecate("scale", "1.0.0", deprecation_message)
+        # tensor [hidden_states] size: [4096, 16, 320], min: -3.316406, max: 6.085938, mean: 0.003951
+        # tensor [encoder_hidden_states] size: [4096, 1, 1024], min: -5.863281, max: 6.507812, mean: 0.004285
+        # [attention_mask] type: <class 'NoneType'>
+        # [temb] type: <class 'NoneType'>
+        # assert attention_mask == None
+        # assert temb == None
 
         residual = hidden_states
 
@@ -2018,7 +2012,7 @@ class XFormersAttnProcessor:
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
 
-        attention_mask = attn.prepare_attention_mask(attention_mask, key_tokens, batch_size)
+        # attention_mask = attn.prepare_attention_mask(attention_mask, key_tokens, batch_size)
         # if attention_mask is not None:
         #     pdb.set_trace()
         #     # expand our mask's singleton query_tokens dimension:
@@ -2030,9 +2024,9 @@ class XFormersAttnProcessor:
         #     _, query_tokens, _ = hidden_states.shape
         #     attention_mask = attention_mask.expand(-1, query_tokens, -1)
 
-        if attn.group_norm is not None:
-            pdb.set_trace()
-            hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
+        # if attn.group_norm is not None:
+        #     pdb.set_trace()
+        #     hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
         query = attn.to_q(hidden_states)
 
@@ -2050,7 +2044,7 @@ class XFormersAttnProcessor:
         value = attn.head_to_batch_dim(value).contiguous()
 
         hidden_states = xformers.ops.memory_efficient_attention(
-            query, key, value, attn_bias=attention_mask, op=self.attention_op, scale=attn.scale
+            query, key, value, attn_bias=None, op=self.attention_op, scale=attn.scale
         )
         hidden_states = hidden_states.to(query.dtype)
         hidden_states = attn.batch_to_head_dim(hidden_states)
@@ -2068,8 +2062,10 @@ class XFormersAttnProcessor:
         #     pdb.set_trace()
         #     hidden_states = hidden_states + residual
 
-        hidden_states = hidden_states / attn.rescale_output_factor
+        # hidden_states = hidden_states / attn.rescale_output_factor
 
+
+        # tensor [hidden_states] size: [4096, 16, 320], min: -0.095337, max: 0.110901, mean: -0.002453
         return hidden_states
 
 class AnimationAttnProcessor(nn.Module):
@@ -2097,9 +2093,14 @@ class AnimationAttnProcessor(nn.Module):
         attn,
         hidden_states,
         encoder_hidden_states=None,
-        attention_mask=None,
-        temb=None,
+        # attention_mask=None,
+        # temb=None,
     ):
+        # tensor [hidden_states] size: [16, 4096, 320], min: -10.609375, max: 32.09375, mean: 0.12576
+        # [encoder_hidden_states] type: <class 'NoneType'>
+        # [attention_mask] type: <class 'NoneType'>
+
+
         # attention_mask = None
         # temb = None
         # (Pdb) attn
@@ -2117,15 +2118,15 @@ class AnimationAttnProcessor(nn.Module):
         assert hidden_states is not None
         # assert encoder_hidden_states is not None
         # assert attention_mask == None
-        assert temb == None
+        # assert temb == None
 
-        residual = hidden_states
-        input_ndim = hidden_states.ndim # 3
+        # residual = hidden_states
+        # input_ndim = hidden_states.ndim # 3
 
-        # tensor [encoder_hidden_states] size: [16, 4096, 320], min: -2.890625, max: 3.320312, mean: 0.006327
-        batch_size, sequence_length, _ = (
-            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
-        )
+        # # tensor [encoder_hidden_states] size: [16, 4096, 320], min: -2.890625, max: 3.320312, mean: 0.006327
+        # batch_size, sequence_length, _ = (
+        #     hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
+        # )
 
         # attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
         # assert attention_mask == None
@@ -2158,6 +2159,8 @@ class AnimationAttnProcessor(nn.Module):
         hidden_states = attn.to_out[0](hidden_states)
         hidden_states = attn.to_out[1](hidden_states)
 
+        # tensor [hidden_states] size: [16, 4096, 320], min: -4.476562, max: 0.760742, mean: -0.001343
+
         return hidden_states
 
 class AnimationIDAttnNormalizedProcessor(nn.Module):
@@ -2188,10 +2191,13 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
             attn,
             hidden_states,
             encoder_hidden_states=None,
-            attention_mask=None,
-            temb=None,
-            scale=1.0,
+            # attention_mask=None,
     ):
+        # tensor [hidden_states] size: [16, 4096, 320], min: -1.165039, max: 1.260742, mean: 0.035343
+        # tensor [encoder_hidden_states] size: [16, 5, 1024], min: -14.492188, max: 14.453125, mean: 0.000888
+        # [attention_mask] type: <class 'NoneType'>
+
+
         # (Pdb) attn
         # Attention(
         #   (to_q): Linear(in_features=320, out_features=320, bias=False)
@@ -2209,15 +2215,15 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         assert hidden_states is not None
         assert encoder_hidden_states is not None
         # assert attention_mask == None
-        assert temb == None
-        assert scale == 1.0
+        # assert temb == None
+        # assert scale == 1.0
         
         residual = hidden_states
-        input_ndim = hidden_states.ndim
+        # input_ndim = hidden_states.ndim
 
-        batch_size, sequence_length, _ = (
-            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
-        )
+        # batch_size, sequence_length, _ = (
+        #     hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
+        # )
 
         # assert attention_mask == None
         # attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
@@ -2236,8 +2242,8 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
-        inner_dim = key.shape[-1]
-        head_dim = inner_dim // attn.heads
+        hidden_size = key.shape[-1]
+        head_dim = hidden_size // attn.heads
 
         query = attn.head_to_batch_dim(query).contiguous()
         key = attn.head_to_batch_dim(key).contiguous()
@@ -2279,9 +2285,14 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         mean_latents, std_latents = torch.mean(hidden_states, dim=(1, 2), keepdim=True), torch.std(hidden_states, dim=(1, 2), keepdim=True)
         mean_ip, std_ip = torch.mean(ip_hidden_states, dim=(1, 2), keepdim=True), torch.std(ip_hidden_states, dim=(1, 2), keepdim=True)
         ip_hidden_states = (ip_hidden_states - mean_ip) * (std_latents / (std_ip + 1e-5)) + mean_latents
-        hidden_states = hidden_states + self.scale * ip_hidden_states
+
+        # hidden_states = hidden_states + self.scale * ip_hidden_states
+        hidden_states = hidden_states + ip_hidden_states
+
         hidden_states = attn.to_out[0](hidden_states)
         hidden_states = attn.to_out[1](hidden_states)
+
+        # tensor [hidden_states] size: [16, 4096, 320], min: -0.642578, max: 0.390625, mean: -0.000428
 
         return hidden_states
 
