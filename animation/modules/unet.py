@@ -1,5 +1,4 @@
 import inspect
-from typing import Dict, Optional, Tuple, Union, Any, Callable
 
 import math
 import torch
@@ -27,7 +26,7 @@ import todos
 from diffusers.utils import logging
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
-
+# xxxx_debug
 if is_xformers_available():
     import xformers
 else:
@@ -232,7 +231,7 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
 
     def forward(self,
             sample: torch.FloatTensor,
-            timestep: Union[torch.Tensor, float, int],
+            timestep,
             encoder_hidden_states: torch.Tensor,
             added_time_ids: torch.Tensor,
             pose_latents: torch.Tensor = None,
@@ -431,7 +430,7 @@ class TimestepEmbedding(nn.Module):
         time_embed_dim: int,
         act_fn: str = "silu",
         out_dim: int = None,
-        post_act_fn: Optional[str] = None,
+        post_act_fn = None,
         sample_proj_bias=True,
     ):
         super().__init__()
@@ -477,7 +476,7 @@ class AlphaBlender(nn.Module):
     def forward(self,
         x_spatial: torch.Tensor,
         x_temporal: torch.Tensor,
-        image_only_indicator: Optional[torch.Tensor] = None,
+        image_only_indicator = None,
     ):
         # tensor [x_spatial] size: [16, 4096, 320], min: -2.132812, max: 1.702148, mean: -0.039416
         # tensor [x_temporal] size: [16, 4096, 320], min: -4.917969, max: 5.1875, mean: -0.088254
@@ -538,8 +537,8 @@ class BasicTransformerBlock(nn.Module):
 
     def forward(self,
         hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
+        attention_mask = None,
+        encoder_hidden_states  = None,
     ) -> torch.Tensor:
         # encoder_attention_mask = None
         # timestep = None
@@ -582,7 +581,7 @@ class TransformerSpatioTemporalModel(nn.Module):
         attention_head_dim: int = 64,
         in_channels: int = 320,
         num_layers: int = 1,
-        cross_attention_dim: Optional[int] = 1024,
+        cross_attention_dim = 1024,
         num_tokens=4,
     ):
         super().__init__()
@@ -639,8 +638,8 @@ class TransformerSpatioTemporalModel(nn.Module):
 
     def forward(self,
         hidden_states: torch.Tensor,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        image_only_indicator: Optional[torch.Tensor] = None,
+        encoder_hidden_states = None,
+        image_only_indicator = None,
         return_dict: bool = False,
     ):
         # tensor [hidden_states] size: [16, 320, 64, 64], min: -17.109375, max: 39.46875, mean: 0.010112
@@ -737,13 +736,13 @@ class Attention(nn.Module):
     """
     def __init__(self,
         query_dim: int,
-        cross_attention_dim: Optional[int] = None, # 1024 or None
+        cross_attention_dim = None, # 1024 or None
         heads: int = 8,
         dim_head: int = 64,
         dropout: float = 0.0,
         bias: bool = False,
         scale_qk: bool = True,
-        processor: Optional["AttnProcessor"] = None,
+        processor = None,
     ):
         super().__init__()
         # assert processor == None
@@ -791,8 +790,8 @@ class Attention(nn.Module):
 
     def forward(self,
         hidden_states: torch.Tensor,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
+        encoder_hidden_states = None,
+        attention_mask = None,
         # **cross_attention_kwargs,
     ) -> torch.Tensor:
         #
@@ -842,10 +841,7 @@ class Attention(nn.Module):
 
         return tensor
 
-    def get_attention_scores(
-        self, query: torch.Tensor, key: torch.Tensor, attention_mask: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-
+    def get_attention_scores(self, query, key, attention_mask = None):
         dtype = query.dtype
 
         if attention_mask is None:
@@ -892,7 +888,7 @@ class Attention(nn.Module):
 class FeedForward(nn.Module):
     def __init__(self,
         dim: int,
-        dim_out: Optional[int] = None,
+        dim_out = None,
         mult: int = 4,
         dropout: float = 0.0,
     ):
@@ -993,7 +989,7 @@ class TemporalBasicTransformerBlock(nn.Module):
     def forward(self,
         hidden_states: torch.Tensor,
         num_frames: int,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_hidden_states = None,
     ) -> torch.Tensor:
         # Notice that normalization is always applied before the real computation in the following blocks.
         # 0. Self-Attention
@@ -1049,9 +1045,9 @@ def get_down_block(
     resnet_eps: float,
     resnet_act_fn: str,
     num_attention_heads: int,
-    resnet_groups: Optional[int] = None,
-    cross_attention_dim: Optional[int] = None,
-    downsample_padding: Optional[int] = None,
+    resnet_groups = None,
+    cross_attention_dim = None,
+    downsample_padding = None,
     dual_cross_attention: bool = False,
     use_linear_projection: bool = True,
     only_cross_attention: bool = False,
@@ -1059,15 +1055,10 @@ def get_down_block(
     resnet_time_scale_shift: str = "default",
     temporal_num_attention_heads: int = 8,
     temporal_max_seq_length: int = 32,
-    transformer_layers_per_block: Union[int, Tuple[int]] = 1,
-    temporal_transformer_layers_per_block: Union[int, Tuple[int]] = 1,
+    transformer_layers_per_block = 1,
+    temporal_transformer_layers_per_block = 1,
     dropout: float = 0.0,
-) -> Union[
-    "DownBlock3D",
-    "CrossAttnDownBlock3D",
-    "DownBlockSpatioTemporal",
-    "CrossAttnDownBlockSpatioTemporal",
-]:
+):
     # down_block_type = 'CrossAttnDownBlockSpatioTemporal'
     # num_layers = 2
     # in_channels = 320
@@ -1166,19 +1157,18 @@ def get_up_block(
     resnet_eps: float,
     resnet_act_fn: str,
     num_attention_heads: int,
-    # resolution_idx: Optional[int] = None,
-    resnet_groups: Optional[int] = None,
-    cross_attention_dim: Optional[int] = None,
+    resnet_groups = None,
+    cross_attention_dim = None,
     dual_cross_attention: bool = False,
     use_linear_projection: bool = True,
     only_cross_attention: bool = False,
     upcast_attention: bool = False,
     resnet_time_scale_shift: str = "default",
     temporal_num_attention_heads: int = 8,
-    temporal_cross_attention_dim: Optional[int] = None,
+    temporal_cross_attention_dim = None,
     temporal_max_seq_length: int = 32,
-    transformer_layers_per_block: Union[int, Tuple[int]] = 1,
-    temporal_transformer_layers_per_block: Union[int, Tuple[int]] = 1,
+    transformer_layers_per_block = 1,
+    temporal_transformer_layers_per_block = 1,
     dropout: float = 0.0,
 ):
     # pdb.set_trace()
@@ -1255,7 +1245,7 @@ class UNetMidBlockSpatioTemporal(nn.Module):
         in_channels: int,
         temb_channels: int,
         num_layers: int = 1,
-        transformer_layers_per_block: Union[int, Tuple[int]] = 1,
+        transformer_layers_per_block = 1,
         num_attention_heads: int = 1,
         cross_attention_dim: int = 1280,
     ):
@@ -1315,9 +1305,9 @@ class UNetMidBlockSpatioTemporal(nn.Module):
 
     def forward(self,
         hidden_states: torch.Tensor,
-        temb: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        image_only_indicator: Optional[torch.Tensor] = None,
+        temb = None,
+        encoder_hidden_states = None,
+        image_only_indicator = None,
     ) -> torch.Tensor:
         hidden_states = self.resnets[0](
             hidden_states,
@@ -1392,8 +1382,8 @@ class DownBlockSpatioTemporal(nn.Module):
 
     def forward(self,
         hidden_states: torch.Tensor,
-        temb: Optional[torch.Tensor] = None,
-        image_only_indicator: Optional[torch.Tensor] = None,
+        temb = None,
+        image_only_indicator = None,
     ):
         output_states = ()
         for resnet in self.resnets:
@@ -1423,7 +1413,7 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
         out_channels: int,
         temb_channels: int,
         num_layers: int = 1,
-        transformer_layers_per_block: Union[int, Tuple[int]] = 1,
+        transformer_layers_per_block = 1,
         num_attention_heads: int = 1,
         cross_attention_dim: int = 1280,
         add_downsample: bool = True,
@@ -1494,10 +1484,10 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
 
     def forward(self,
         hidden_states: torch.Tensor,
-        temb: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        image_only_indicator: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, ...]]:
+        temb = None,
+        encoder_hidden_states = None,
+        image_only_indicator = None,
+    ):
         output_states = ()
 
         blocks = list(zip(self.resnets, self.attentions))
@@ -1533,7 +1523,6 @@ class UpBlockSpatioTemporal(nn.Module):
         prev_output_channel: int,
         out_channels: int,
         temb_channels: int,
-        # resolution_idx: Optional[int] = None,
         num_layers: int = 1,
         resnet_eps: float = 1e-6,
         add_upsample: bool = True,
@@ -1576,9 +1565,9 @@ class UpBlockSpatioTemporal(nn.Module):
 
     def forward(self,
         hidden_states: torch.Tensor,
-        res_hidden_states_tuple: Tuple[torch.Tensor, ...],
-        temb: Optional[torch.Tensor] = None,
-        image_only_indicator: Optional[torch.Tensor] = None,
+        res_hidden_states_tuple,
+        temb = None,
+        image_only_indicator = None,
     ) -> torch.Tensor:
         for resnet in self.resnets:
             # pop res hidden states
@@ -1609,7 +1598,7 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
         prev_output_channel: int,
         temb_channels: int,
         num_layers: int = 1,
-        transformer_layers_per_block: Union[int, Tuple[int]] = 1,
+        transformer_layers_per_block = 1,
         resnet_eps: float = 1e-6,
         num_attention_heads: int = 1,
         cross_attention_dim: int = 1280,
@@ -1675,10 +1664,10 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
 
     def forward(self,
         hidden_states: torch.Tensor,
-        res_hidden_states_tuple: Tuple[torch.Tensor, ...],
-        temb: Optional[torch.Tensor] = None,
-        encoder_hidden_states: Optional[torch.Tensor] = None,
-        image_only_indicator: Optional[torch.Tensor] = None,
+        res_hidden_states_tuple,
+        temb = None,
+        encoder_hidden_states = None,
+        image_only_indicator = None,
     ) -> torch.Tensor:
         for resnet, attn in zip(self.resnets, self.attentions):
             # pop res hidden states
@@ -1946,7 +1935,7 @@ class Downsample2D(nn.Module):
         self,
         channels: int,
         use_conv: bool = False,
-        out_channels: Optional[int] = None,
+        out_channels = None,
         padding: int = 1,
         name: str = "conv",
         kernel_size=3,
@@ -2022,20 +2011,9 @@ class Downsample2D(nn.Module):
 
 
 class TemporalConvLayer(nn.Module):
-    """
-    Temporal convolutional layer that can be used for video (sequence of images) input Code mostly copied from:
-    https://github.com/modelscope/modelscope/blob/1509fdb973e5871f37148a4b5e5964cafd43e64d/modelscope/models/multi_modal/video_synthesis/unet_sd.py#L1016
-
-    Parameters:
-        in_dim (`int`): Number of input channels.
-        out_dim (`int`): Number of output channels.
-        dropout (`float`, *optional*, defaults to `0.0`): The dropout probability to use.
-    """
-
-    def __init__(
-        self,
+    def __init__(self,
         in_dim: int,
-        out_dim: Optional[int] = None,
+        out_dim = None,
         dropout: float = 0.0,
         norm_num_groups: int = 32,
     ):
@@ -2093,30 +2071,12 @@ class TemporalConvLayer(nn.Module):
 
 
 class SpatioTemporalResBlock(nn.Module):
-    r"""
-    A SpatioTemporal Resnet block.
-
-    Parameters:
-        in_channels (`int`): The number of channels in the input.
-        out_channels (`int`, *optional*, default to be `None`):
-            The number of output channels for the first conv2d layer. If None, same as `in_channels`.
-        temb_channels (`int`, *optional*, default to `512`): the number of channels in timestep embedding.
-        eps (`float`, *optional*, defaults to `1e-6`): The epsilon to use for the spatial resenet.
-        temporal_eps (`float`, *optional*, defaults to `eps`): The epsilon to use for the temporal resnet.
-        merge_factor (`float`, *optional*, defaults to `0.5`): The merge factor to use for the temporal mixing.
-        merge_strategy (`str`, *optional*, defaults to `learned_with_images`):
-            The merge strategy to use for the temporal mixing.
-        switch_spatial_to_temporal_mix (`bool`, *optional*, defaults to `False`):
-            If `True`, switch the spatial and temporal mixing.
-    """
-
-    def __init__(
-        self,
+    def __init__(self,
         in_channels: int,
-        out_channels: Optional[int] = None,
+        out_channels = None,
         temb_channels: int = 512,
         eps: float = 1e-6,
-        temporal_eps: Optional[float] = None,
+        temporal_eps = None,
         merge_factor: float = 0.5,
         merge_strategy="learned_with_images",
         switch_spatial_to_temporal_mix: bool = False,
@@ -2145,8 +2105,8 @@ class SpatioTemporalResBlock(nn.Module):
 
     def forward(self,
         hidden_states: torch.Tensor,
-        temb: Optional[torch.Tensor] = None,
-        image_only_indicator: Optional[torch.Tensor] = None,
+        temb = None,
+        image_only_indicator = None,
     ):
         num_frames = image_only_indicator.shape[-1]
         hidden_states = self.spatial_res_block(hidden_states, temb)
@@ -2176,154 +2136,56 @@ class SpatioTemporalResBlock(nn.Module):
 
 class ResnetBlock2D(nn.Module):
     r"""
-    A Resnet block.
-
-    Parameters:
-        in_channels (`int`): The number of channels in the input.
-        out_channels (`int`, *optional*, default to be `None`):
-            The number of output channels for the first conv2d layer. If None, same as `in_channels`.
-        dropout (`float`, *optional*, defaults to `0.0`): The dropout probability to use.
-        temb_channels (`int`, *optional*, default to `512`): the number of channels in timestep embedding.
-        groups (`int`, *optional*, default to `32`): The number of groups to use for the first normalization layer.
-        groups_out (`int`, *optional*, default to None):
-            The number of groups to use for the second normalization layer. if set to None, same as `groups`.
-        eps (`float`, *optional*, defaults to `1e-6`): The epsilon to use for the normalization.
-        non_linearity (`str`, *optional*, default to `"swish"`): the activation function to use.
-        time_embedding_norm (`str`, *optional*, default to `"default"` ): Time scale shift config.
-            By default, apply timestep embedding conditioning with a simple shift mechanism. Choose "scale_shift" for a
-            stronger conditioning with scale and shift.
-        kernel (`torch.Tensor`, optional, default to None): FIR filter, see
-            [`~models.resnet.FirUpsample2D`] and [`~models.resnet.FirDownsample2D`].
-        output_scale_factor (`float`, *optional*, default to be `1.0`): the scale factor to use for the output.
-        use_in_shortcut (`bool`, *optional*, default to `True`):
-            If `True`, add a 1x1 nn.conv2d layer for skip-connection.
-        up (`bool`, *optional*, default to `False`): If `True`, add an upsample layer.
-        down (`bool`, *optional*, default to `False`): If `True`, add a downsample layer.
-        conv_shortcut_bias (`bool`, *optional*, default to `True`):  If `True`, adds a learnable bias to the
-            `conv_shortcut` output.
-        conv_2d_out_channels (`int`, *optional*, default to `None`): the number of channels in the output.
-            If None, same as `out_channels`.
+            in_channels=in_channels,
+            out_channels=out_channels,
+            temb_channels=temb_channels,
+            eps=eps,
     """
-
-    def __init__(
-        self,
-        *,
+    def __init__(self,
         in_channels: int,
-        out_channels: Optional[int] = None,
+        out_channels = None,
+        temb_channels: int = 512,
+        eps: float = 1e-6,
+
         conv_shortcut: bool = False,
         dropout: float = 0.0,
-        temb_channels: int = 512,
         groups: int = 32,
-        groups_out: Optional[int] = None,
-        pre_norm: bool = True,
-        eps: float = 1e-6,
-        non_linearity: str = "swish",
-        skip_time_act: bool = False,
-        time_embedding_norm: str = "default",  # default, scale_shift,
-        kernel: Optional[torch.Tensor] = None,
-        output_scale_factor: float = 1.0,
-        use_in_shortcut: Optional[bool] = None,
-        up: bool = False,
-        down: bool = False,
-        conv_shortcut_bias: bool = True,
-        conv_2d_out_channels: Optional[int] = None,
     ):
         super().__init__()
-        # in_channels = 128
-        # out_channels = 128
-        # conv_shortcut = False
-        # dropout = 0.0
-        # temb_channels = None
-        # groups = 32
-        # groups_out = 32
-        # pre_norm = True
-        # eps = 1e-06
-        # non_linearity = 'silu'
-        # skip_time_act = False
-        # time_embedding_norm = 'default'
-        # kernel = None
-        # output_scale_factor = 1.0
-        # use_in_shortcut = None
-        # up = False
-        # down = False
-        # conv_shortcut_bias = True
-        # conv_2d_out_channels = 128
 
-        
-        if time_embedding_norm == "ada_group":
-            raise ValueError(
-                "This class cannot be used with `time_embedding_norm==ada_group`, please use `ResnetBlockCondNorm2D` instead",
-            )
-        if time_embedding_norm == "spatial":
-            raise ValueError(
-                "This class cannot be used with `time_embedding_norm==spatial`, please use `ResnetBlockCondNorm2D` instead",
-            )
-
-        self.pre_norm = True
         self.in_channels = in_channels
         out_channels = in_channels if out_channels is None else out_channels
         self.out_channels = out_channels
-        self.use_conv_shortcut = conv_shortcut
-        self.up = up
-        self.down = down
-        self.output_scale_factor = output_scale_factor
-        self.time_embedding_norm = time_embedding_norm
-        self.skip_time_act = skip_time_act
-
-        if groups_out is None:
-            groups_out = groups
 
         self.norm1 = nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)
 
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
 
         if temb_channels is not None:
-            if self.time_embedding_norm == "default":
-                self.time_emb_proj = nn.Linear(temb_channels, out_channels)
-            elif self.time_embedding_norm == "scale_shift":
-                self.time_emb_proj = nn.Linear(temb_channels, 2 * out_channels)
-            else:
-                raise ValueError(f"unknown time_embedding_norm : {self.time_embedding_norm} ")
+            self.time_emb_proj = nn.Linear(temb_channels, out_channels)
         else:
             self.time_emb_proj = None
 
-        self.norm2 = nn.GroupNorm(num_groups=groups_out, num_channels=out_channels, eps=eps, affine=True)
+        self.norm2 = nn.GroupNorm(num_groups=groups, num_channels=out_channels, eps=eps, affine=True)
 
         self.dropout = nn.Dropout(dropout)
-        conv_2d_out_channels = conv_2d_out_channels or out_channels
-        self.conv2 = nn.Conv2d(out_channels, conv_2d_out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
 
         self.nonlinearity = nn.SiLU() # get_activation(non_linearity)
 
         self.upsample = self.downsample = None
-        if self.up:
-            if kernel == "fir":
-                fir_kernel = (1, 3, 3, 1)
-                self.upsample = lambda x: upsample_2d(x, kernel=fir_kernel)
-            elif kernel == "sde_vp":
-                self.upsample = partial(F.interpolate, scale_factor=2.0, mode="nearest")
-            else:
-                self.upsample = Upsample2D(in_channels, use_conv=False)
-        elif self.down:
-            if kernel == "fir":
-                fir_kernel = (1, 3, 3, 1)
-                self.downsample = lambda x: downsample_2d(x, kernel=fir_kernel)
-            elif kernel == "sde_vp":
-                self.downsample = partial(F.avg_pool2d, kernel_size=2, stride=2)
-            else:
-                self.downsample = Downsample2D(in_channels, use_conv=False, padding=1, name="op")
 
-        self.use_in_shortcut = self.in_channels != conv_2d_out_channels if use_in_shortcut is None else use_in_shortcut
+        self.use_in_shortcut = self.in_channels != out_channels
 
         self.conv_shortcut = None
         if self.use_in_shortcut:
             self.conv_shortcut = nn.Conv2d(
                 in_channels,
-                conv_2d_out_channels,
+                out_channels,
                 kernel_size=1,
                 stride=1,
                 padding=0,
-                bias=conv_shortcut_bias,
+                bias=True,
             )
         # pdb.set_trace()
 
@@ -2351,24 +2213,12 @@ class ResnetBlock2D(nn.Module):
         hidden_states = self.conv1(hidden_states)
 
         if self.time_emb_proj is not None:
-            if not self.skip_time_act:
-                temb = self.nonlinearity(temb)
+            temb = self.nonlinearity(temb)
             temb = self.time_emb_proj(temb)[:, :, None, None]
 
-        if self.time_embedding_norm == "default":
-            if temb is not None:
-                hidden_states = hidden_states + temb
-            hidden_states = self.norm2(hidden_states)
-        elif self.time_embedding_norm == "scale_shift":
-            if temb is None:
-                raise ValueError(
-                    f" `temb` should not be None when `time_embedding_norm` is {self.time_embedding_norm}"
-                )
-            time_scale, time_shift = torch.chunk(temb, 2, dim=1)
-            hidden_states = self.norm2(hidden_states)
-            hidden_states = hidden_states * (1 + time_scale) + time_shift
-        else:
-            hidden_states = self.norm2(hidden_states)
+        if temb is not None:
+            hidden_states = hidden_states + temb
+        hidden_states = self.norm2(hidden_states)
 
         hidden_states = self.nonlinearity(hidden_states)
 
@@ -2378,7 +2228,7 @@ class ResnetBlock2D(nn.Module):
         if self.conv_shortcut is not None:
             input_tensor = self.conv_shortcut(input_tensor)
 
-        output_tensor = (input_tensor + hidden_states) / self.output_scale_factor
+        output_tensor = (input_tensor + hidden_states) # / self.output_scale_factor
 
         return output_tensor
 
@@ -2386,8 +2236,8 @@ class ResnetBlock2D(nn.Module):
 class TemporalResnetBlock(nn.Module):
     def __init__(self,
         in_channels: int,
-        out_channels: Optional[int] = None,
-        temb_channels: Optional[int] = None,
+        out_channels = None,
+        temb_channels = None,
         eps: float = 1e-6,
     ):
         super().__init__()

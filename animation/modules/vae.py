@@ -24,7 +24,6 @@ from diffusers.utils.torch_utils import randn_tensor
 from diffusers.utils import is_torch_version, logging
 from diffusers.utils.import_utils import is_torch_available
 
-
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
