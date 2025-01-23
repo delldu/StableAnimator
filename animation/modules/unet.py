@@ -413,6 +413,10 @@ class Timesteps(nn.Module):
         self.downscale_freq_shift = downscale_freq_shift
         self.scale = scale
 
+        assert self.flip_sin_to_cos == True
+        assert self.downscale_freq_shift == 0
+        assert self.scale == 1.0
+
     def forward(self, timesteps):
         t_emb = get_timestep_embedding(
             timesteps,
@@ -426,8 +430,8 @@ class Timesteps(nn.Module):
 
 class TimestepEmbedding(nn.Module):
     def __init__(self,
-        in_channels: int,
-        time_embed_dim: int,
+        in_channels = 320,
+        time_embed_dim = 1280,
         act_fn: str = "silu",
         out_dim: int = None,
         post_act_fn = None,
@@ -507,6 +511,7 @@ class BasicTransformerBlock(nn.Module):
         cross_attention_dim  = 1024,
     ):
         super().__init__()
+
         # Define 3 blocks. Each block has its own normalization layer.
         # 1. Self-Attn
         self.norm1 = nn.LayerNorm(dim, elementwise_affine=True, eps=1e-5)
@@ -929,7 +934,8 @@ class GEGLU(nn.Module):
         super().__init__()
         self.proj = nn.Linear(dim_in, dim_out * 2, bias=bias)
 
-    def forward(self, hidden_states, *args, **kwargs):
+    # def forward(self, hidden_states, *args, **kwargs):
+    def forward(self, hidden_states):
         # args = ()
         # kwargs = {}
         hidden_states = self.proj(hidden_states)
@@ -939,9 +945,7 @@ class GEGLU(nn.Module):
 class TemporalBasicTransformerBlock(nn.Module):
     r"""
     A basic Transformer block for video like data.
-
     Parameters:
-
         inner_dim,
         inner_dim,
         num_attention_heads,
@@ -1036,8 +1040,6 @@ class TemporalBasicTransformerBlock(nn.Module):
         hidden_states = hidden_states.reshape(batch_size * num_frames, seq_length, channels)
 
         return hidden_states
-
-
 
 def get_down_block(
     down_block_type: str,
@@ -1326,23 +1328,18 @@ class UNetMidBlockSpatioTemporal(nn.Module):
         temb = None,
         encoder_hidden_states = None,
         image_only_indicator = None,
-    ) -> torch.Tensor:
-        hidden_states = self.resnets[0](
-            hidden_states,
-            temb,
+    ):
+        hidden_states = self.resnets[0](hidden_states, temb,
             image_only_indicator=image_only_indicator,
         )
 
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
-            hidden_states = attn(
-                hidden_states,
+            hidden_states = attn(hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 image_only_indicator=image_only_indicator,
                 return_dict=False,
             )[0]
-            hidden_states = resnet(
-                hidden_states,
-                temb,
+            hidden_states = resnet(hidden_states, temb,
                 image_only_indicator=image_only_indicator,
             )
 
@@ -1351,18 +1348,14 @@ class UNetMidBlockSpatioTemporal(nn.Module):
 # --- down_block_types
 class DownBlockSpatioTemporal(nn.Module):
     def __init__(self,
-        in_channels: int,
-        out_channels: int,
-        temb_channels: int,
+        in_channels = 1280,
+        out_channels = 1280,
+        temb_channels = 1280,
         num_layers: int = 1,
         add_downsample: bool = True,
     ):
         super().__init__()
-        # in_channels = 1280
-        # out_channels = 1280
-        # temb_channels = 1280
-        # num_layers = 2
-        # add_downsample = False
+
         assert num_layers == 2
         assert add_downsample == False
 
@@ -1406,11 +1399,7 @@ class DownBlockSpatioTemporal(nn.Module):
     ):
         output_states = ()
         for resnet in self.resnets:
-            hidden_states = resnet(
-                hidden_states,
-                temb,
-                image_only_indicator=image_only_indicator,
-            )
+            hidden_states = resnet(hidden_states, temb, image_only_indicator=image_only_indicator)
 
             output_states = output_states + (hidden_states,)
 
@@ -1430,24 +1419,15 @@ class DownBlockSpatioTemporal(nn.Module):
 # --- down_block_types
 class CrossAttnDownBlockSpatioTemporal(nn.Module):
     def __init__(self,
-        in_channels: int,
-        out_channels: int,
-        temb_channels: int,
-        num_layers: int = 1,
+        in_channels = 320,
+        out_channels = 320,
+        temb_channels = 1280,        num_layers: int = 1,
         transformer_layers_per_block = 1,
         num_attention_heads: int = 1,
         cross_attention_dim: int = 1280,
         add_downsample: bool = True,
     ):
         super().__init__()
-        # in_channels = 320
-        # out_channels = 320
-        # temb_channels = 1280
-        # num_layers = 2
-        # transformer_layers_per_block = [1, 1]
-        # num_attention_heads = 5
-        # cross_attention_dim = 1024
-        # add_downsample = True
 
         # assert num_attention_heads == 5
         assert cross_attention_dim == 1024
@@ -1540,10 +1520,10 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
 # up_block_types
 class UpBlockSpatioTemporal(nn.Module):
     def __init__(self,
-        in_channels: int,
-        prev_output_channel: int,
-        out_channels: int,
-        temb_channels: int,
+        in_channels = 1280,
+        prev_output_channel = 1280,
+        out_channels = 1280,
+        temb_channels = 1280,
         num_layers: int = 1,
         resnet_eps: float = 1e-6,
         add_upsample: bool = True,
@@ -1559,7 +1539,6 @@ class UpBlockSpatioTemporal(nn.Module):
         # add_upsample = True
 
         resnets = []
-
         for i in range(num_layers):
             res_skip_channels = in_channels if (i == num_layers - 1) else out_channels
             resnet_in_channels = prev_output_channel if i == 0 else out_channels
@@ -1572,7 +1551,6 @@ class UpBlockSpatioTemporal(nn.Module):
                     eps=resnet_eps,
                 )
             )
-
         self.resnets = nn.ModuleList(resnets)
 
         assert add_upsample == True
@@ -1944,7 +1922,6 @@ class Downsample2D(nn.Module):
                         out_channels=out_channels,
                         name="op",
     """
-
     def __init__(self,
         channels: int,
         use_conv: bool = True,
@@ -2101,8 +2078,8 @@ class ResnetBlock2D(nn.Module):
             eps=eps,
     """
     def __init__(self,
-        in_channels: int,
-        out_channels = None,
+        in_channels = 320,
+        out_channels = 320,
         temb_channels: int = 512,
         eps: float = 1e-6,
 
@@ -2174,7 +2151,7 @@ class ResnetBlock2D(nn.Module):
 
 class TemporalResnetBlock(nn.Module):
     def __init__(self,
-        in_channels: int,
+        in_channels = 320,
         out_channels = None,
         temb_channels = None,
         eps: float = 1e-6,
@@ -2229,7 +2206,7 @@ class TemporalResnetBlock(nn.Module):
             )
         # pdb.set_trace()
 
-    def forward(self, input_tensor: torch.Tensor, temb: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_tensor: torch.Tensor, temb: torch.Tensor):
         hidden_states = input_tensor
 
         hidden_states = self.norm1(hidden_states)
