@@ -285,13 +285,7 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         if pose_latents is not None:
             # ==> pdb.set_trace()
             sample = sample + pose_latents
-        else:
-            # ==> pdb.set_trace() for pose_latents == None
-            pass
 
-        # assert image_only_indicator == False
-        # image_only_indicator = torch.ones(batch_size, num_frames, dtype=sample.dtype, device=sample.device) \
-        #     if image_only_indicator else torch.zeros(batch_size, num_frames, dtype=sample.dtype, device=sample.device)
         image_only_indicator = torch.zeros(batch_size, num_frames, dtype=sample.dtype, device=sample.device)
 
         down_block_res_samples = (sample,)
@@ -384,18 +378,21 @@ def get_timestep_embedding(
     exponent = -math.log(max_period) * torch.arange(
         start=0, end=half_dim, dtype=torch.float32, device=timesteps.device
     )
+    assert downscale_freq_shift == 0
     exponent = exponent / (half_dim - downscale_freq_shift)
 
     emb = torch.exp(exponent)
     emb = timesteps[:, None].float() * emb[None, :]
 
     # scale embeddings
+    assert scale == 1
     emb = scale * emb
 
     # concat sine and cosine embeddings
     emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)
 
     # flip sine and cosine embeddings
+    assert flip_sin_to_cos == True
     if flip_sin_to_cos:
         emb = torch.cat([emb[:, half_dim:], emb[:, :half_dim]], dim=-1)
 
@@ -443,6 +440,8 @@ class TimestepEmbedding(nn.Module):
 
         self.linear_1 = nn.Linear(in_channels, time_embed_dim, sample_proj_bias)
         self.act = nn.SiLU() # get_activation(act_fn)
+
+        # assert out_dim is not None
         if out_dim is not None:
             time_embed_dim_out = out_dim
         else:
@@ -451,8 +450,9 @@ class TimestepEmbedding(nn.Module):
 
     def forward(self, sample, condition=None):
         sample = self.linear_1(sample)
-        if self.act is not None:
-            sample = self.act(sample)
+        # if self.act is not None:
+        #     sample = self.act(sample)
+        sample = self.act(sample)
         sample = self.linear_2(sample)
 
         return sample
@@ -549,9 +549,6 @@ class BasicTransformerBlock(nn.Module):
         attention_mask = None,
         encoder_hidden_states  = None,
     ) -> torch.Tensor:
-        # encoder_attention_mask = None
-        # timestep = None
-
         # Notice that normalization is always applied before the real computation in the following blocks.
         # 1. Self-Attention
         batch_size = hidden_states.shape[0]
@@ -560,7 +557,6 @@ class BasicTransformerBlock(nn.Module):
         attn_output = self.attn1(
             norm_hidden_states,
             encoder_hidden_states=None, #encoder_hidden_states if self.only_cross_attention else None,
-            # attention_mask=attention_mask,
         )
 
         hidden_states = attn_output + hidden_states
@@ -570,7 +566,6 @@ class BasicTransformerBlock(nn.Module):
         attn_output = self.attn2(
             norm_hidden_states,
             encoder_hidden_states=encoder_hidden_states,
-            # attention_mask=None,
         )
         hidden_states = attn_output + hidden_states
 
@@ -755,11 +750,9 @@ class Attention(nn.Module):
         processor = None,
     ):
         super().__init__()
-        # assert processor == None
 
         self.hidden_size = dim_head * heads # hidden_size ???
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
-        # self.rescale_output_factor = 1.0
         self.residual_connection = False
         self.out_dim = query_dim
 
@@ -801,21 +794,13 @@ class Attention(nn.Module):
     def forward(self,
         hidden_states: torch.Tensor,
         encoder_hidden_states = None,
-        # attention_mask = None,
-        # **cross_attention_kwargs,
-    ) -> torch.Tensor:
-        #
-        # encoder_hidden_states = None
-        # attention_mask = None
-        # cross_attention_kwargs = {}
-
+    ):
         # self.processor -- AnimationAttnProcessor()
         # self.processor -- AnimationIDAttnNormalizedProcessor()
         # self.processor -- <animation.modules.unet.XFormersAttnProcessor()
         return self.processor(self,
             hidden_states,
             encoder_hidden_states=encoder_hidden_states,
-            # attention_mask=attention_mask,
         )
 
     def batch_to_head_dim(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -835,20 +820,12 @@ class Attention(nn.Module):
         Reshape the tensor from `[batch_size, seq_len, dim]` to `[batch_size, seq_len, heads, dim // heads]` `heads` is
         the number of heads initialized while constructing the `Attention` class.
         """
-        assert out_dim == 3
-        assert tensor.ndim == 3
-
         head_size = self.heads
-        if tensor.ndim == 3:
-            batch_size, seq_len, dim = tensor.shape
-            extra_dim = 1
-        else:
-            batch_size, extra_dim, seq_len, dim = tensor.shape
+        batch_size, seq_len, dim = tensor.shape
+        extra_dim = 1
         tensor = tensor.reshape(batch_size, seq_len * extra_dim, head_size, dim // head_size)
         tensor = tensor.permute(0, 2, 1, 3)
-
-        if out_dim == 3:
-            tensor = tensor.reshape(batch_size * head_size, seq_len * extra_dim, dim // head_size)
+        tensor = tensor.reshape(batch_size * head_size, seq_len * extra_dim, dim // head_size)
 
         return tensor
 
@@ -925,9 +902,7 @@ class FeedForward(nn.Module):
         # )
 
 
-    def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
-        # args = ()
-        # kwargs = {}
+    def forward(self, hidden_states):
         for module in self.net:
             hidden_states = module(hidden_states)
         return hidden_states
@@ -940,10 +915,7 @@ class GEGLU(nn.Module):
         super().__init__()
         self.proj = nn.Linear(dim_in, dim_out * 2, bias=bias)
 
-    # def forward(self, hidden_states, *args, **kwargs):
     def forward(self, hidden_states):
-        # args = ()
-        # kwargs = {}
         hidden_states = self.proj(hidden_states)
         hidden_states, gate = hidden_states.chunk(2, dim=-1)
         return hidden_states * F.gelu(gate)
@@ -1017,10 +989,7 @@ class TemporalBasicTransformerBlock(nn.Module):
         residual = hidden_states
         hidden_states = self.norm_in(hidden_states)
         hidden_states = self.ff_in(hidden_states)
-
-        assert self.is_res == True
-        if self.is_res:
-            hidden_states = hidden_states + residual
+        hidden_states = hidden_states + residual
 
         norm_hidden_states = self.norm1(hidden_states)
         attn_output = self.attn1(norm_hidden_states, encoder_hidden_states=None)
@@ -1034,12 +1003,7 @@ class TemporalBasicTransformerBlock(nn.Module):
         # 4. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
         ff_output = self.ff(norm_hidden_states)
-
-        assert self.is_res == True
-        if self.is_res:
-            hidden_states = ff_output + hidden_states
-        else:
-            hidden_states = ff_output
+        hidden_states = ff_output + hidden_states
 
         hidden_states = hidden_states[None, :].reshape(batch_size, seq_length, num_frames, channels)
         hidden_states = hidden_states.permute(0, 2, 1, 3)
@@ -1149,8 +1113,6 @@ def get_up_block(
     temporal_transformer_layers_per_block = 1,
     dropout: float = 0.0,
 ):
-    # pdb.set_trace()
-    print("up_block_type: ", up_block_type)
     #     ['UpBlockSpatioTemporal', 'CrossAttnUpBlockSpatioTemporal', 
     #     'CrossAttnUpBlockSpatioTemporal', 'CrossAttnUpBlockSpatioTemporal']
     if up_block_type == "UpBlockSpatioTemporal": # True
@@ -1242,9 +1204,7 @@ class UNetMidBlockSpatioTemporal(nn.Module):
 
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
-
         self.gradient_checkpointing = False
-        # pdb.set_trace()
 
     def forward(self,
         hidden_states: torch.Tensor,
@@ -1298,22 +1258,8 @@ class DownBlockSpatioTemporal(nn.Module):
         self.resnets = nn.ModuleList(resnets)
 
         assert add_downsample == False
-        if add_downsample:
-            self.downsamplers = nn.ModuleList(
-                [
-                    Downsample2D(
-                        out_channels,
-                        use_conv=True,
-                        out_channels=out_channels,
-                        name="op",
-                    )
-                ]
-            )
-        else:
-            self.downsamplers = None
 
         self.gradient_checkpointing = False
-        # pdb.set_trace()
 
     def forward(self,
         hidden_states: torch.Tensor,
@@ -1323,19 +1269,7 @@ class DownBlockSpatioTemporal(nn.Module):
         output_states = ()
         for resnet in self.resnets:
             hidden_states = resnet(hidden_states, temb, image_only_indicator=image_only_indicator)
-
             output_states = output_states + (hidden_states,)
-
-        assert self.downsamplers == None
-
-        if self.downsamplers is not None:
-            for downsampler in self.downsamplers:
-                hidden_states = downsampler(hidden_states)
-
-            output_states = output_states + (hidden_states,)
-        else:
-            # ==> pdb.set_trace()
-            pass
 
         return hidden_states, output_states
 
@@ -1389,23 +1323,19 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
 
-        if add_downsample:
-            self.downsamplers = nn.ModuleList(
-                [
-                    Downsample2D(
-                        out_channels,
-                        use_conv=True,
-                        out_channels=out_channels,
-                        # padding=1,
-                        name="op",
-                    )
-                ]
-            )
-        else:
-            self.downsamplers = None
+        self.downsamplers = nn.ModuleList(
+        [
+                Downsample2D(
+                out_channels,
+                use_conv=True,
+                out_channels=out_channels,
+                # padding=1,
+                name="op",
+                )
+        ]
+        )
 
         self.gradient_checkpointing = False
-        # pdb.set_trace()
 
     def forward(self,
         hidden_states: torch.Tensor,
@@ -1431,13 +1361,9 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
 
             output_states = output_states + (hidden_states,)
 
-        if self.downsamplers is not None:
-            for downsampler in self.downsamplers:
-                hidden_states = downsampler(hidden_states)
-
-            output_states = output_states + (hidden_states,)
-        else:
-            pdb.set_trace()
+        for downsampler in self.downsamplers:
+            hidden_states = downsampler(hidden_states)
+        output_states = output_states + (hidden_states,)
 
         return hidden_states, output_states
 
@@ -1467,15 +1393,8 @@ class UpBlockSpatioTemporal(nn.Module):
                 )
             )
         self.resnets = nn.ModuleList(resnets)
-
-        assert add_upsample == True
-        if add_upsample:
-            self.upsamplers = nn.ModuleList([Upsample2D(out_channels, use_conv=True, out_channels=out_channels)])
-        else:
-            self.upsamplers = None
-
+        self.upsamplers = nn.ModuleList([Upsample2D(out_channels, use_conv=True, out_channels=out_channels)])
         self.gradient_checkpointing = False
-        # self.resolution_idx = resolution_idx
 
     def forward(self,
         hidden_states,
@@ -1496,12 +1415,8 @@ class UpBlockSpatioTemporal(nn.Module):
                 image_only_indicator=image_only_indicator,
             )
 
-        assert self.upsamplers is not None
-        if self.upsamplers is not None:
-            for upsampler in self.upsamplers:
-                hidden_states = upsampler(hidden_states)
-        else:
-            pdb.set_trace()
+        for upsampler in self.upsamplers:
+            hidden_states = upsampler(hidden_states)
 
         return hidden_states
 
@@ -1985,57 +1900,16 @@ class XFormersAttnProcessor:
         attn: Attention,
         hidden_states: torch.Tensor,
         encoder_hidden_states = None,
-        # attention_mask = None,
-        # temb = None,
     ):
         # tensor [hidden_states] size: [4096, 16, 320], min: -3.316406, max: 6.085938, mean: 0.003951
         # tensor [encoder_hidden_states] size: [4096, 1, 1024], min: -5.863281, max: 6.507812, mean: 0.004285
-        # [attention_mask] type: <class 'NoneType'>
-        # [temb] type: <class 'NoneType'>
-        # assert attention_mask == None
-        # assert temb == None
 
         residual = hidden_states
-
-        # if attn.spatial_norm is not None:
-        #     pdb.set_trace()
-        #     hidden_states = attn.spatial_norm(hidden_states, temb)
-
-        input_ndim = hidden_states.ndim
-        # hidden_states.size() -- [4096, 16, 320]
-        # if input_ndim == 4:
-        #     pdb.set_trace()
-        #     batch_size, channel, height, width = hidden_states.shape
-        #     hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
-
-        batch_size, key_tokens, _ = (
-            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
-        )
-
-        # attention_mask = attn.prepare_attention_mask(attention_mask, key_tokens, batch_size)
-        # if attention_mask is not None:
-        #     pdb.set_trace()
-        #     # expand our mask's singleton query_tokens dimension:
-        #     #   [batch*heads,            1, key_tokens] ->
-        #     #   [batch*heads, query_tokens, key_tokens]
-        #     # so that it can be added as a bias onto the attention scores that xformers computes:
-        #     #   [batch*heads, query_tokens, key_tokens]
-        #     # we do this explicitly because xformers doesn't broadcast the singleton dimension for us.
-        #     _, query_tokens, _ = hidden_states.shape
-        #     attention_mask = attention_mask.expand(-1, query_tokens, -1)
-
-        # if attn.group_norm is not None:
-        #     pdb.set_trace()
-        #     hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
         query = attn.to_q(hidden_states)
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
-        # elif attn.norm_cross:
-        #     pdb.set_trace()
-        #     encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
-
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
@@ -2054,52 +1928,26 @@ class XFormersAttnProcessor:
         # dropout
         hidden_states = attn.to_out[1](hidden_states)
 
-        # if input_ndim == 4:
-        #     pdb.set_trace()
-        #     hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
-
-        # if attn.residual_connection:
-        #     pdb.set_trace()
-        #     hidden_states = hidden_states + residual
-
-        # hidden_states = hidden_states / attn.rescale_output_factor
-
-
         # tensor [hidden_states] size: [4096, 16, 320], min: -0.095337, max: 0.110901, mean: -0.002453
         return hidden_states
 
 class AnimationAttnProcessor(nn.Module):
     def __init__(self,
         hidden_size=320,
-        # cross_attention_dim=None,
-        # rank=4,
-        # network_alpha=None,
-        # lora_scale=1.0,
         ):
         super().__init__()
-        # pdb.set_trace()
         if not hasattr(F, "scaled_dot_product_attention"):
             raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
         self.hidden_size = hidden_size
-
-        # hidden_size = 320
-        # cross_attention_dim = None
-        # rank = 128
-        # network_alpha = None
-        # lora_scale = 1.0
-        # assert cross_attention_dim == None
 
     def __call__(self,
         attn,
         hidden_states,
         encoder_hidden_states=None,
-        # attention_mask=None,
-        # temb=None,
     ):
         # tensor [hidden_states] size: [16, 4096, 320], min: -10.609375, max: 32.09375, mean: 0.12576
         # [encoder_hidden_states] type: <class 'NoneType'>
         # [attention_mask] type: <class 'NoneType'>
-
 
         # attention_mask = None
         # temb = None
@@ -2116,21 +1964,6 @@ class AnimationAttnProcessor(nn.Module):
         # )
         # tensor [hidden_states] size: [16, 4096, 320], min: -0.878906, max: 1.689453, mean: 0.00032
         assert hidden_states is not None
-        # assert encoder_hidden_states is not None
-        # assert attention_mask == None
-        # assert temb == None
-
-        # residual = hidden_states
-        # input_ndim = hidden_states.ndim # 3
-
-        # # tensor [encoder_hidden_states] size: [16, 4096, 320], min: -2.890625, max: 3.320312, mean: 0.006327
-        # batch_size, sequence_length, _ = (
-        #     hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
-        # )
-
-        # attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-        # assert attention_mask == None
-
         query = attn.to_q(hidden_states)
 
         if encoder_hidden_states is None:
@@ -2175,8 +2008,6 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         assert cross_attention_dim == 1024
 
         self.scale = scale
-        # self.id_to_k = nn.Linear(cross_attention_dim or hidden_size, hidden_size, bias=False)
-        # self.id_to_v = nn.Linear(cross_attention_dim or hidden_size, hidden_size, bias=False)
         self.id_to_k = nn.Linear(cross_attention_dim, hidden_size, bias=False)
         self.id_to_v = nn.Linear(cross_attention_dim, hidden_size, bias=False)
 
@@ -2214,23 +2045,10 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         # )
         assert hidden_states is not None
         assert encoder_hidden_states is not None
-        # assert attention_mask == None
-        # assert temb == None
-        # assert scale == 1.0
         
         residual = hidden_states
-        # input_ndim = hidden_states.ndim
-
-        # batch_size, sequence_length, _ = (
-        #     hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
-        # )
-
-        # assert attention_mask == None
-        # attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-        # assert attention_mask == None
 
         query = attn.to_q(hidden_states)
-
         encoder_hidden_states = encoder_hidden_states.to(hidden_states.dtype)
 
         end_pos = encoder_hidden_states.shape[1] - self.num_tokens
@@ -2252,7 +2070,6 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         key = key.to(query.dtype)
         value = value.to(query.dtype)
 
-        # assert attention_mask == None
         if is_xformers_available(): # True
             ### xformers
             hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=None)
@@ -2286,7 +2103,6 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
         mean_ip, std_ip = torch.mean(ip_hidden_states, dim=(1, 2), keepdim=True), torch.std(ip_hidden_states, dim=(1, 2), keepdim=True)
         ip_hidden_states = (ip_hidden_states - mean_ip) * (std_latents / (std_ip + 1e-5)) + mean_latents
 
-        # hidden_states = hidden_states + self.scale * ip_hidden_states
         hidden_states = hidden_states + ip_hidden_states
 
         hidden_states = attn.to_out[0](hidden_states)
