@@ -110,24 +110,7 @@ class Attention(nn.Module):
         hidden_states: torch.Tensor,
         encoder_hidden_states = None,
         attention_mask = None,
-        # **cross_attention_kwargs,
     ):
-        # encoder_hidden_states = None
-        # attention_mask = None
-        # cross_attention_kwargs = {}
-
-        # attn_parameters = set(inspect.signature(self.processor.__call__).parameters.keys())
-        # # attn_parameters --
-        # # {'kwargs', 'encoder_hidden_states', 'args', 'hidden_states', 'attention_mask', 'attn'}
-        # cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
-        # # assert cross_attention_kwargs == {}
-
-        # return self.processor(self,
-        #     hidden_states,
-        #     encoder_hidden_states=encoder_hidden_states,
-        #     attention_mask=attention_mask,
-        #     # **cross_attention_kwargs,
-        # )
         residual = hidden_states
         input_ndim = hidden_states.ndim
 
@@ -135,6 +118,8 @@ class Attention(nn.Module):
             # ==> pdb.set_trace()
             batch_size, channel, height, width = hidden_states.shape
             hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+        else:
+            pdb.set_trace()
 
         batch_size, sequence_length, _ = (
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
@@ -142,7 +127,7 @@ class Attention(nn.Module):
 
         # assert  attention_mask is not None
         if attention_mask is not None:
-            # ==> pdb.set_trace()
+            pdb.set_trace()
             attention_mask = self.prepare_attention_mask(attention_mask, sequence_length, batch_size)
             attention_mask = attention_mask.view(batch_size, self.heads, -1, attention_mask.shape[-1])
 
@@ -180,14 +165,8 @@ class Attention(nn.Module):
         # dropout
         # hidden_states = self.to_out[1](hidden_states)
 
-        if input_ndim == 4:
-            # ==> pdb.set_trace()
-            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
-        else:
-            pdb.set_trace()
+        hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
-        # if self.residual_connection: # True
-        #     hidden_states = hidden_states + residual
         hidden_states = hidden_states + residual
 
         return hidden_states
