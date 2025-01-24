@@ -32,30 +32,49 @@ import todos
 
 # ------------------------------
 class Attention(nn.Module):
+    """
+                in_channels,
+                heads=in_channels // attention_head_dim,
+                dim_head=attention_head_dim,
+                eps=resnet_eps,
+                norm_num_groups=resnet_groups,
+                spatial_norm_dim=None,
+                residual_connection=True,
+                bias=True,
+                upcast_softmax=True,
+    ------------------------------------------------------------------------------------                        
+                query_dim=in_channels,
+                heads=in_channels // attention_head_dim,
+                dim_head=attention_head_dim,
+                eps=1e-6,
+                norm_num_groups=32,
+                bias=True,
+                residual_connection=True,    
+    """
     def __init__(self,
         query_dim: int,
         heads: int = 8,
         dim_head: int = 64,
-        bias: bool = True,
-        upcast_softmax: bool = False,
+        # bias: bool = True,
+        # upcast_softmax: bool = False,
         norm_num_groups = None,
-        spatial_norm_dim = None,
+        # spatial_norm_dim = None,
         eps: float = 1e-6,
-        residual_connection: bool = True,
+        # residual_connection: bool = True,
 
-        processor = None,
+        # processor = None,
     ):
         super().__init__()
 
         # To prevent circular import.
         # from .normalization import FP32LayerNorm, RMSNorm
-        assert processor == None
+        # assert processor == None
 
         self.heads = heads
         self.inner_dim = dim_head * heads
         self.cross_attention_dim = query_dim
-        self.upcast_softmax = upcast_softmax
-        self.residual_connection = residual_connection # !!!
+        # self.upcast_softmax = upcast_softmax
+        # self.residual_connection = residual_connection # !!!
         self.out_dim = query_dim
         self.scale = dim_head**-0.5
 
@@ -64,17 +83,17 @@ class Attention(nn.Module):
         else:
             self.group_norm = None
 
-        self.spatial_norm = None # !!!
-        self.norm_q = None
-        self.norm_k = None
-        self.norm_cross = None
+        # self.spatial_norm = None # !!!
+        # self.norm_q = None
+        # self.norm_k = None
+        # self.norm_cross = None
 
 
-        self.to_q = nn.Linear(query_dim, self.inner_dim, bias=bias)
+        self.to_q = nn.Linear(query_dim, self.inner_dim, bias=True)
 
         # only relevant for the `AddedKVProcessor` classes
-        self.to_k = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=bias)
-        self.to_v = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=bias)
+        self.to_k = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=True)
+        self.to_v = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=True)
 
         self.to_out = nn.ModuleList([])
         self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=True))
@@ -135,8 +154,8 @@ class Attention(nn.Module):
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
-        elif self.norm_cross:
-            encoder_hidden_states = self.norm_encoder_hidden_states(encoder_hidden_states)
+        # elif self.norm_cross:
+        #     encoder_hidden_states = self.norm_encoder_hidden_states(encoder_hidden_states)
 
         key = self.to_k(encoder_hidden_states)
         value = self.to_v(encoder_hidden_states)
@@ -164,9 +183,12 @@ class Attention(nn.Module):
         if input_ndim == 4:
             # ==> pdb.set_trace()
             hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+        else:
+            pdb.set_trace()
 
-        if self.residual_connection: # True
-            hidden_states = hidden_states + residual
+        # if self.residual_connection: # True
+        #     hidden_states = hidden_states + residual
+        hidden_states = hidden_states + residual
 
         return hidden_states
 
@@ -418,7 +440,6 @@ class UNetMidBlock2D(nn.Module):
                 out_channels=in_channels,
                 eps=resnet_eps,
                 groups=resnet_groups,
-                non_linearity="silu",
                 pre_norm=True,
             )
         ]
@@ -433,10 +454,10 @@ class UNetMidBlock2D(nn.Module):
                     dim_head=attention_head_dim,
                     eps=resnet_eps,
                     norm_num_groups=resnet_groups,
-                    spatial_norm_dim=None,
-                    residual_connection=True,
-                    bias=True,
-                    upcast_softmax=True,
+                    # spatial_norm_dim=None,
+                    # residual_connection=True,
+                    # bias=True,
+                    # upcast_softmax=True,
                 )
             )
             resnets.append(
@@ -445,7 +466,6 @@ class UNetMidBlock2D(nn.Module):
                     out_channels=in_channels,
                     eps=resnet_eps,
                     groups=resnet_groups,
-                    non_linearity="silu",
                     pre_norm=True,
                 )
             )
@@ -695,8 +715,8 @@ class MidBlockTemporalDecoder(nn.Module):
                 dim_head=attention_head_dim,
                 eps=1e-6,
                 norm_num_groups=32,
-                bias=True,
-                residual_connection=True,
+                # bias=True,
+                # residual_connection=True,
             )
         )
 
@@ -807,7 +827,6 @@ class DownEncoderBlock2D(nn.Module):
                     out_channels=out_channels,
                     eps=resnet_eps,
                     groups=resnet_groups,
-                    non_linearity="silu",
                     pre_norm=True,
                 )
             )
@@ -922,32 +941,23 @@ class Upsample2D(nn.Module):
 
 # !!! ---------------------------------
 class ResnetBlock2D(nn.Module):
-    r"""
-    """
     def __init__(self,
-        *,
         in_channels: int,
-        out_channels = None,
+        out_channels: int,
         groups: int = 32,
         pre_norm: bool = True,
         eps: float = 1e-6,
-        non_linearity: str = "silu",
-
-        # conv_shortcut: bool = False,
     ):
         super().__init__()
-        # assert conv_shortcut == False
 
-        assert out_channels is not None
         self.in_channels = in_channels
-        out_channels = in_channels if out_channels is None else out_channels
         self.out_channels = out_channels
 
         self.norm1 = nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.norm2 = nn.GroupNorm(num_groups=groups, num_channels=out_channels, eps=eps, affine=True)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
-        self.nonlinearity = nn.SiLU() # get_activation(non_linearity)
+        self.nonlinearity = nn.SiLU()
         self.use_in_shortcut = self.in_channels != out_channels
 
         if self.use_in_shortcut:
@@ -972,7 +982,6 @@ class ResnetBlock2D(nn.Module):
         hidden_states = self.nonlinearity(hidden_states)
         hidden_states = self.conv2(hidden_states)
 
-        # assert self.conv_shortcut == None
         if self.conv_shortcut is not None:
             input_tensor = self.conv_shortcut(input_tensor)
 
@@ -1120,80 +1129,6 @@ class AlphaBlender(nn.Module):
 
         x = alpha * x_spatial + (1.0 - alpha) * x_temporal
         return x
-
-# xxxx_debug
-# class AttnProcessor2_0:
-#     def __init__(self):
-#         if not hasattr(F, "scaled_dot_product_attention"):
-#             raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
-
-#     def __call__(self,
-#         attn: Attention,
-#         hidden_states: torch.Tensor,
-#         encoder_hidden_states = None,
-#         attention_mask = None,
-#         # temb = None,
-#     ):
-#         residual = hidden_states
-#         input_ndim = hidden_states.ndim
-
-#         if input_ndim == 4:
-#             # ==> pdb.set_trace()
-#             batch_size, channel, height, width = hidden_states.shape
-#             hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
-
-#         batch_size, sequence_length, _ = (
-#             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
-#         )
-
-#         # assert  attention_mask is not None
-#         if attention_mask is not None:
-#             # ==> pdb.set_trace()
-#             attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-#             attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
-
-#         if attn.group_norm is not None:
-#             # ==> pdb.set_trace()
-#             hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
-
-#         query = attn.to_q(hidden_states)
-
-#         if encoder_hidden_states is None:
-#             encoder_hidden_states = hidden_states
-#         elif attn.norm_cross:
-#             encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
-
-#         key = attn.to_k(encoder_hidden_states)
-#         value = attn.to_v(encoder_hidden_states)
-
-#         inner_dim = key.shape[-1]
-#         head_dim = inner_dim // attn.heads
-
-#         query = query.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
-
-#         key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
-#         value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
-
-#         hidden_states = F.scaled_dot_product_attention(
-#             query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
-#         )
-
-#         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
-#         hidden_states = hidden_states.to(query.dtype)
-
-#         # linear proj
-#         hidden_states = attn.to_out[0](hidden_states)
-#         # dropout
-#         # hidden_states = attn.to_out[1](hidden_states)
-
-#         if input_ndim == 4:
-#             # ==> pdb.set_trace()
-#             hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
-
-#         if attn.residual_connection: # True
-#             hidden_states = hidden_states + residual
-
-#         return hidden_states
 
 
 if __name__ == "__main__":
