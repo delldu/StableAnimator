@@ -480,6 +480,9 @@ if __name__ == "__main__":
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
 
+    # torch.save(vae.state_dict(), "/tmp/vae_3d.pth")
+    # torch.save(unet.state_dict(), "/tmp/unet_3d.pth")
+
     weight_dtype = torch.float16
     # weight_dtype = torch.float32
     # weight_dtype = torch.bfloat16
