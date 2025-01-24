@@ -66,6 +66,8 @@ class AutoencoderKLTemporalDecoder(nn.Module):
         assert num_frames == 4
         # tensor [decode z] size: [4, 4, 64, 64], min: -35.8125, max: 41.1875, mean: -0.8983
         batch_size = z.shape[0] // num_frames
+
+        # xxxx_debug !!!
         image_only_indicator = torch.zeros(batch_size, num_frames, dtype=z.dtype, device=z.device)
         decoded = self.decoder(z, num_frames=num_frames, image_only_indicator=image_only_indicator)
         # tensor [decoded] size: [4, 3, 512, 512], min: -1.092773, max: 1.15332, mean: -0.015342
@@ -108,28 +110,21 @@ def randn_tensor(shape, generator=None, device=None, dtype=None, layout=None):
     return latents
 
 
-# ------------------------------
 class Attention(nn.Module):
     def __init__(
         self,
         query_dim,
         heads=8,
         dim_head=64,
-        norm_num_groups=None,
-        eps=1e-6,
     ):
         super().__init__()
-
         self.heads = heads
         self.inner_dim = dim_head * heads
         self.cross_attention_dim = query_dim
         self.out_dim = query_dim
         self.scale = dim_head**-0.5
 
-        if norm_num_groups is not None:  # True | False
-            self.group_norm = nn.GroupNorm(num_channels=query_dim, num_groups=norm_num_groups, eps=eps, affine=True)
-        else:
-            self.group_norm = None
+        self.group_norm = nn.GroupNorm(num_channels=query_dim, num_groups=32, eps=1e-6, affine=True)
 
         self.to_q = nn.Linear(query_dim, self.inner_dim, bias=True)
         self.to_k = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=True)
@@ -139,28 +134,21 @@ class Attention(nn.Module):
         self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=True))
         self.to_out.append(nn.Dropout(0.0))
 
-    def forward(self, hidden_states, encoder_hidden_states=None):
+    def forward(self, hidden_states):
+        # tensor [hidden_states] size: [1, 512, 64, 64], min: -656.834106, max: 557.63092, mean: 0.08263
+
         residual = hidden_states
         input_ndim = hidden_states.ndim
 
         batch_size, channel, height, width = hidden_states.shape
         hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
-
-        batch_size, sequence_length, _ = (
-            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
-        )
-
         if self.group_norm is not None:
             # ==> pdb.set_trace()
             hidden_states = self.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
         query = self.to_q(hidden_states)
-
-        if encoder_hidden_states is None:
-            encoder_hidden_states = hidden_states
-
-        key = self.to_k(encoder_hidden_states)
-        value = self.to_v(encoder_hidden_states)
+        key = self.to_k(hidden_states)
+        value = self.to_v(hidden_states)
 
         inner_dim = key.shape[-1]
         head_dim = inner_dim // self.heads
@@ -183,6 +171,7 @@ class Attention(nn.Module):
 
         hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
         hidden_states = hidden_states + residual
+        # tensor [hidden_states] size: [1, 512, 64, 64], min: -668.319702, max: 548.596924, mean: 0.415326
 
         return hidden_states
 
@@ -210,17 +199,15 @@ class DiagonalGaussianDistribution(object):
         return self.mean
 
 
-# once !!! ---------------------------------
 class UNetMidBlock2D(nn.Module):
     def __init__(
         self,
         in_channels=512,
-        resnet_groups=32,
         attention_head_dim=512,
         num_layers=1,
     ):
         super().__init__()
-        resnets = [ResnetBlock2D(in_channels=in_channels, out_channels=in_channels, eps=1e-6, groups=resnet_groups)]
+        resnets = [ResnetBlock2D(in_channels=in_channels, out_channels=in_channels, eps=1e-6, groups=32)]
         attentions = []
 
         assert num_layers == 1
@@ -230,19 +217,17 @@ class UNetMidBlock2D(nn.Module):
                     in_channels,
                     heads=in_channels // attention_head_dim,
                     dim_head=attention_head_dim,
-                    eps=1e-6,
-                    norm_num_groups=resnet_groups,
                 )
             )
             resnets.append(
-                ResnetBlock2D(in_channels=in_channels, out_channels=in_channels, eps=1e-6, groups=resnet_groups)
+                ResnetBlock2D(in_channels=in_channels, out_channels=in_channels, eps=1e-6, groups=32)
             )
 
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
 
     def forward(self, hidden_states):
-        # todos.debug.output_var("hidden_states1", hidden_states)
+        # tensor [hidden_states1] size: [1, 512, 64, 64], min: -524.558533, max: 458.682739, mean: 1.415484
 
         # (Pdb) self.attentions
         # ModuleList(
@@ -271,24 +256,19 @@ class UNetMidBlock2D(nn.Module):
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
             hidden_states = attn(hidden_states)
             hidden_states = resnet(hidden_states)
-        # todos.debug.output_var("hidden_states2", hidden_states)
+        # tensor [hidden_states2] size: [1, 512, 64, 64], min: -631.920898, max: 525.334229, mean: 0.462752
 
         return hidden_states
 
 
-# !!! once --------------------------------------------
 class TemporalDecoder(nn.Module):
     def __init__(self, in_channels=4, out_channels=3, block_out_channels=(128, 256, 512, 512), layers_per_block=2):
         super().__init__()
         assert layers_per_block == 2
-
-        self.conv_in = nn.Conv2d(in_channels, block_out_channels[-1], kernel_size=3, stride=1, padding=1)
-        self.mid_block = MidBlockTemporalDecoder(
-            num_layers=layers_per_block,
-            in_channels=block_out_channels[-1],
-            out_channels=block_out_channels[-1],
-            attention_head_dim=block_out_channels[-1],
-        )
+        first_in_channel = 128 # block_out_channels[0]
+        last_out_channel = 512 # block_out_channels[-1]
+        self.conv_in = nn.Conv2d(in_channels, last_out_channel, kernel_size=3, stride=1, padding=1)
+        self.mid_block = MidBlockTemporalDecoder(num_layers=layers_per_block, dim=last_out_channel)
 
         # up
         self.up_blocks = nn.ModuleList([])
@@ -308,11 +288,10 @@ class TemporalDecoder(nn.Module):
             self.up_blocks.append(up_block)
             prev_output_channel = output_channel
 
-        self.conv_norm_out = nn.GroupNorm(num_channels=block_out_channels[0], num_groups=32, eps=1e-6)
-
+        self.conv_norm_out = nn.GroupNorm(num_channels=first_in_channel, num_groups=32, eps=1e-6)
         self.conv_act = nn.SiLU()
         self.conv_out = nn.Conv2d(
-            in_channels=block_out_channels[0], out_channels=out_channels, kernel_size=3, padding=1
+            in_channels=first_in_channel, out_channels=out_channels, kernel_size=3, padding=1
         )
 
         out_kernel_size = (3, 1, 1)
@@ -322,9 +301,9 @@ class TemporalDecoder(nn.Module):
         )
 
     def forward(self, sample, image_only_indicator, num_frames=1):
-        # todos.debug.output_var("sample1", sample)
-        # todos.debug.output_var("image_only_indicator", image_only_indicator)
-        # todos.debug.output_var("num_frames", num_frames)
+        # tensor [sample] size: [4, 4, 64, 64], min: -3.986736, max: 4.073826, mean: 0.00144
+        # tensor [image_only_indicator] size: [1, 4], min: 0.0, max: 0.0, mean: 0.0
+        # [num_frames] value: '4'
 
         sample = self.conv_in(sample)
 
@@ -345,18 +324,15 @@ class TemporalDecoder(nn.Module):
         batch_frames, channels, height, width = sample.shape
         batch_size = batch_frames // num_frames
         sample = sample[None, :].reshape(batch_size, num_frames, channels, height, width).permute(0, 2, 1, 3, 4)
-        # tensor [sample1] size: [1, 3, 4, 512, 512], min: -5.296875, max: 3.916016, mean: -0.315182
+        # tensor [sample] size: [1, 3, 4, 512, 512], min: -5.296875, max: 3.916016, mean: -0.315182
         sample = self.time_conv_out(sample)
-        # tensor [sample2] size: [1, 3, 4, 512, 512], min: -1.197266, max: 1.191406, mean: -0.004497
-
-        # todos.debug.output_var("sample1", sample)
+        # tensor [sample] size: [1, 3, 4, 512, 512], min: -1.197266, max: 1.191406, mean: -0.004497
         sample = sample.permute(0, 2, 1, 3, 4).reshape(batch_frames, channels, height, width)
-        # todos.debug.output_var("sample2", sample)
+        # tensor [sample] size: [4, 3, 512, 512], min: -0.477861, max: 0.189522, mean: -0.111536
 
         return sample
 
 
-# !!! once --------------------------------------
 class Encoder(nn.Module):
     def __init__(
         self,
@@ -364,44 +340,36 @@ class Encoder(nn.Module):
         out_channels=4,
         block_out_channels=[128, 256, 512, 512],
         layers_per_block=2,
-        norm_num_groups=32,
     ):
         super().__init__()
-        self.conv_in = nn.Conv2d(in_channels, block_out_channels[0], kernel_size=3, stride=1, padding=1)
+        output_channel = 128 # block_out_channels[0]
+        last_out_channel = 512 # block_out_channels[-1];
+
+        self.conv_in = nn.Conv2d(in_channels, output_channel, kernel_size=3, stride=1, padding=1)
 
         self.down_blocks = nn.ModuleList([])
-
-        # down
-        output_channel = block_out_channels[0]
         for i, down_block_type in enumerate(block_out_channels):
             input_channel = output_channel
             output_channel = block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
-
             down_block = DownEncoderBlock2D(
                 in_channels=input_channel,
                 out_channels=output_channel,
                 num_layers=layers_per_block,
                 add_downsample=not is_final_block,
-                resnet_groups=norm_num_groups,
             )
-
             self.down_blocks.append(down_block)
 
         # mid
-        self.mid_block = UNetMidBlock2D(
-            in_channels=block_out_channels[-1], attention_head_dim=block_out_channels[-1], resnet_groups=norm_num_groups
-        )
+        self.mid_block = UNetMidBlock2D(in_channels=last_out_channel, attention_head_dim=last_out_channel)
 
         # out
-        self.conv_norm_out = nn.GroupNorm(num_channels=block_out_channels[-1], num_groups=norm_num_groups, eps=1e-6)
+        self.conv_norm_out = nn.GroupNorm(num_channels=last_out_channel, num_groups=32, eps=1e-6)
         self.conv_act = nn.SiLU()
-
-        conv_out_channels = 2 * out_channels
-        self.conv_out = nn.Conv2d(block_out_channels[-1], conv_out_channels, 3, padding=1)
+        self.conv_out = nn.Conv2d(last_out_channel, 2 * out_channels, 3, padding=1)
 
     def forward(self, sample):
-        # todos.debug.output_var("sample1", sample)
+        # tensor [sample] size: [1, 3, 512, 512], min: -4.833205, max: 4.741517, mean: -0.000397
         sample = self.conv_in(sample)
 
         # down
@@ -416,41 +384,35 @@ class Encoder(nn.Module):
         sample = self.conv_act(sample)
         sample = self.conv_out(sample)
 
-        # todos.debug.output_var("sample2", sample)
+        # tensor [sample] size: [1, 8, 64, 64], min: -12.912671, max: 20.121521, mean: 2.41029
         return sample
 
 
-# !!! once -------------------------------------
 class MidBlockTemporalDecoder(nn.Module):
-    def __init__(self, in_channels, out_channels, attention_head_dim=512, num_layers=2):
+    def __init__(self, dim=512, num_layers=2):
         super().__init__()
         resnets = []
         attentions = []
-
         assert num_layers == 2
         for i in range(num_layers):  # 2
-            input_channels = in_channels if i == 0 else out_channels
             resnets.append(
                 SpatioTemporalResBlock(
-                    in_channels=input_channels, out_channels=out_channels, eps=1e-6, merge_factor=0.0
+                    in_channels=dim, out_channels=dim, eps=1e-6, merge_factor=0.0
                 )
             )
         attentions.append(
             Attention(
-                query_dim=in_channels,
-                heads=in_channels // attention_head_dim,
-                dim_head=attention_head_dim,
-                eps=1e-6,
-                norm_num_groups=32,
+                query_dim=dim,
+                heads=dim // dim, # 1
+                dim_head=dim,
             )
         )
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
 
     def forward(self, hidden_states, image_only_indicator):
-        # todos.debug.output_var("hidden_states5", hidden_states)
-        # todos.debug.output_var("image_only_indicator", image_only_indicator)
-
+        # tensor [hidden_states] size: [4, 512, 64, 64], min: -2.799238, max: 2.383698, mean: 0.012568
+        # tensor [image_only_indicator] size: [1, 4], min: 0.0, max: 0.0, mean: 0.0
         hidden_states = self.resnets[0](
             hidden_states,
             image_only_indicator=image_only_indicator,
@@ -461,11 +423,11 @@ class MidBlockTemporalDecoder(nn.Module):
                 hidden_states,
                 image_only_indicator=image_only_indicator,
             )
-        # todos.debug.output_var("hidden_states6", hidden_states)
+        # tensor [hidden_states] size: [4, 512, 64, 64], min: -7.462655, max: 6.545697, mean: 0.0344
+
         return hidden_states
 
 
-# !!! ------------------------------------
 class UpBlockTemporalDecoder(nn.Module):
     def __init__(
         self,
@@ -484,16 +446,14 @@ class UpBlockTemporalDecoder(nn.Module):
                 )
             )
         self.resnets = nn.ModuleList(resnets)
-
         if add_upsample:
             self.upsamplers = nn.ModuleList([Upsample2D(out_channels, out_channels=out_channels)])
         else:
             self.upsamplers = None
 
     def forward(self, hidden_states, image_only_indicator):
-        # todos.debug.output_var("hidden_states7", hidden_states)
-        # todos.debug.output_var("image_only_indicator", image_only_indicator)
-
+        # tensor [hidden_states] size: [4, 256, 512, 512], min: -1035.322632, max: 813.782288, mean: -2.003695
+        # tensor [image_only_indicator] size: [1, 4], min: 0.0, max: 0.0, mean: 0.0
         for resnet in self.resnets:
             hidden_states = resnet(hidden_states, image_only_indicator=image_only_indicator)
 
@@ -501,7 +461,7 @@ class UpBlockTemporalDecoder(nn.Module):
             for upsampler in self.upsamplers:
                 hidden_states = upsampler(hidden_states)
 
-        # todos.debug.output_var("hidden_states8", hidden_states)
+        # tensor [hidden_states] size: [4, 128, 512, 512], min: -2852.224121, max: 2672.371338, mean: -11.729029
         return hidden_states
 
 
@@ -512,7 +472,6 @@ class DownEncoderBlock2D(nn.Module):
         in_channels,
         out_channels,
         num_layers=1,
-        resnet_groups=32,
         add_downsample=True,  # True | False
     ):
         super().__init__()
@@ -520,7 +479,7 @@ class DownEncoderBlock2D(nn.Module):
         for i in range(num_layers):
             in_channels = in_channels if i == 0 else out_channels
             resnets.append(
-                ResnetBlock2D(in_channels=in_channels, out_channels=out_channels, eps=1e-6, groups=resnet_groups)
+                ResnetBlock2D(in_channels=in_channels, out_channels=out_channels, eps=1e-6, groups=32)
             )
 
         self.resnets = nn.ModuleList(resnets)
@@ -540,14 +499,11 @@ class DownEncoderBlock2D(nn.Module):
         return hidden_states
 
 
-# !!! ----------------------------
 class Downsample2D(nn.Module):
     def __init__(self, channels, out_channels=None, padding=1):
         super().__init__()
-
         self.channels = channels
-        self.out_channels = out_channels or channels
-        self.conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, stride=2, padding=padding, bias=True)
+        self.conv = nn.Conv2d(self.channels, out_channels, kernel_size=3, stride=2, padding=padding, bias=True)
 
     def forward(self, hidden_states):
         assert hidden_states.shape[1] == self.channels
@@ -566,8 +522,7 @@ class Upsample2D(nn.Module):
     def __init__(self, channels, out_channels=None):
         super().__init__()
         self.channels = channels
-        self.out_channels = out_channels or channels
-        self.conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, padding=1, bias=True)
+        self.conv = nn.Conv2d(self.channels, out_channels, kernel_size=3, padding=1, bias=True)
 
     def forward(self, hidden_states, output_size=None):
         assert hidden_states.shape[1] == self.channels
@@ -605,8 +560,6 @@ class ResnetBlock2D(nn.Module):
         super().__init__()
 
         self.in_channels = in_channels
-        self.out_channels = out_channels
-
         self.norm1 = nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.norm2 = nn.GroupNorm(num_groups=groups, num_channels=out_channels, eps=eps, affine=True)
@@ -643,11 +596,9 @@ class TemporalResnetBlock(nn.Module):
         super().__init__()
 
         self.in_channels = in_channels
-        self.out_channels = out_channels
 
         kernel_size = (3, 1, 1)
         padding = [k // 2 for k in kernel_size]
-
         self.norm1 = nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=eps, affine=True)
         self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size=kernel_size, stride=1, padding=padding)
 
@@ -668,15 +619,16 @@ class TemporalResnetBlock(nn.Module):
 
         hidden_states = self.norm1(hidden_states)
         hidden_states = self.nonlinearity(hidden_states)
-        # tensor [hidden_states1] size: [1, 512, 4, 64, 64], min: -0.278564, max: 33.3125, mean: 0.150598
+        # tensor [hidden_states] size: [1, 512, 4, 64, 64], min: -0.278564, max: 33.3125, mean: 0.150598
         hidden_states = self.conv1(hidden_states)
-        # tensor [hidden_states2] size: [1, 512, 4, 64, 64], min: -193.625, max: 17.5, mean: 0.080203
+        # tensor [hidden_states] size: [1, 512, 4, 64, 64], min: -193.625, max: 17.5, mean: 0.080203
 
         hidden_states = self.norm2(hidden_states)
         hidden_states = self.nonlinearity(hidden_states)
-        # tensor [hidden_states3] size: [1, 512, 4, 64, 64], min: -0.278564, max: 17.9375, mean: 0.021441
+
+        # tensor [hidden_states] size: [1, 512, 4, 64, 64], min: -0.278564, max: 17.9375, mean: 0.021441
         hidden_states = self.conv2(hidden_states)
-        # tensor [hidden_states4] size: [1, 512, 4, 64, 64], min: -16.4375, max: 15.179688, mean: -0.033997
+        # tensor [hidden_states] size: [1, 512, 4, 64, 64], min: -16.4375, max: 15.179688, mean: -0.033997
 
         if self.conv_shortcut is not None:
             input_tensor = self.conv_shortcut(input_tensor)
@@ -695,6 +647,9 @@ class SpatioTemporalResBlock(nn.Module):
         self.time_mixer = AlphaBlender(alpha=merge_factor)
 
     def forward(self, hidden_states, image_only_indicator):
+        # tensor [hidden_states] size: [4, 128, 512, 512], min: -2456.013672, max: 2166.745117, mean: -12.363848
+        # tensor [image_only_indicator] size: [1, 4], min: 0.0, max: 0.0, mean: 0.0
+
         num_frames = image_only_indicator.shape[-1]
         hidden_states = self.spatial_res_block(hidden_states)
 
@@ -704,18 +659,24 @@ class SpatioTemporalResBlock(nn.Module):
         hidden_states_mix = (
             hidden_states[None, :].reshape(batch_size, num_frames, channels, height, width).permute(0, 2, 1, 3, 4)
         )
+        # tensor [hidden_states_mix] size: [1, 128, 4, 512, 512], min: -2725.466553, max: 2433.611328, mean: -13.435627
+
+        # tensor [hidden_states] size: [4, 128, 512, 512], min: -2725.466553, max: 2433.611328, mean: -13.435627
         hidden_states = (
             hidden_states[None, :].reshape(batch_size, num_frames, channels, height, width).permute(0, 2, 1, 3, 4)
         )
+        # tensor [hidden_states] size: [1, 128, 4, 512, 512], min: -2725.466553, max: 2433.611328, mean: -13.435627
 
         hidden_states = self.temporal_res_block(hidden_states)
         hidden_states = self.time_mixer(x_spatial=hidden_states_mix, x_temporal=hidden_states)
 
+        # tensor [hidden_states] size: [1, 128, 4, 512, 512], min: -2725.077637, max: 2434.273193, mean: -13.265444
         hidden_states = hidden_states.permute(0, 2, 1, 3, 4).reshape(batch_frames, channels, height, width)
+        # tensor [hidden_states] size: [4, 128, 512, 512], min: -2725.077637, max: 2434.273193, mean: -13.265444
+
         return hidden_states
 
 
-# !!! -------------------------------
 class AlphaBlender(nn.Module):
     def __init__(self, alpha):
         super().__init__()
