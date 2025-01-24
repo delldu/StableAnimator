@@ -80,35 +80,95 @@ class Attention(nn.Module):
         self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=True))
         self.to_out.append(nn.Dropout(0.0))
 
-        if processor is None:
-            processor = AttnProcessor2_0()
-        self.set_processor(processor)
+        # if processor is None:
+        #     processor = AttnProcessor2_0()
+        # self.set_processor(processor)
 
-    def set_processor(self, processor):
-        self.processor = processor
+    # def set_processor(self, processor):
+    #     self.processor = processor
 
     def forward(self,
         hidden_states: torch.Tensor,
         encoder_hidden_states = None,
         attention_mask = None,
-        **cross_attention_kwargs,
+        # **cross_attention_kwargs,
     ):
         # encoder_hidden_states = None
         # attention_mask = None
-        # cross_attention_kwargs = {'temb': None}
+        # cross_attention_kwargs = {}
 
-        attn_parameters = set(inspect.signature(self.processor.__call__).parameters.keys())
-        # attn_parameters --
-        # {'kwargs', 'temb', 'encoder_hidden_states', 'args', 'hidden_states', 'attention_mask', 'attn'}
-        cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
-        # assert cross_attention_kwargs == {}
+        # attn_parameters = set(inspect.signature(self.processor.__call__).parameters.keys())
+        # # attn_parameters --
+        # # {'kwargs', 'encoder_hidden_states', 'args', 'hidden_states', 'attention_mask', 'attn'}
+        # cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
+        # # assert cross_attention_kwargs == {}
 
-        return self.processor(self,
-            hidden_states,
-            encoder_hidden_states=encoder_hidden_states,
-            attention_mask=attention_mask,
-            **cross_attention_kwargs,
+        # return self.processor(self,
+        #     hidden_states,
+        #     encoder_hidden_states=encoder_hidden_states,
+        #     attention_mask=attention_mask,
+        #     # **cross_attention_kwargs,
+        # )
+        residual = hidden_states
+        input_ndim = hidden_states.ndim
+
+        if input_ndim == 4:
+            # ==> pdb.set_trace()
+            batch_size, channel, height, width = hidden_states.shape
+            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+
+        batch_size, sequence_length, _ = (
+            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
+
+        # assert  attention_mask is not None
+        if attention_mask is not None:
+            # ==> pdb.set_trace()
+            attention_mask = self.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+            attention_mask = attention_mask.view(batch_size, self.heads, -1, attention_mask.shape[-1])
+
+        if self.group_norm is not None:
+            # ==> pdb.set_trace()
+            hidden_states = self.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
+
+        query = self.to_q(hidden_states)
+
+        if encoder_hidden_states is None:
+            encoder_hidden_states = hidden_states
+        elif self.norm_cross:
+            encoder_hidden_states = self.norm_encoder_hidden_states(encoder_hidden_states)
+
+        key = self.to_k(encoder_hidden_states)
+        value = self.to_v(encoder_hidden_states)
+
+        inner_dim = key.shape[-1]
+        head_dim = inner_dim // self.heads
+
+        query = query.view(batch_size, -1, self.heads, head_dim).transpose(1, 2)
+
+        key = key.view(batch_size, -1, self.heads, head_dim).transpose(1, 2)
+        value = value.view(batch_size, -1, self.heads, head_dim).transpose(1, 2)
+
+        hidden_states = F.scaled_dot_product_attention(
+            query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+        )
+
+        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, self.heads * head_dim)
+        hidden_states = hidden_states.to(query.dtype)
+
+        # linear proj
+        hidden_states = self.to_out[0](hidden_states)
+        # dropout
+        # hidden_states = self.to_out[1](hidden_states)
+
+        if input_ndim == 4:
+            # ==> pdb.set_trace()
+            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+
+        if self.residual_connection: # True
+            hidden_states = hidden_states + residual
+
+        return hidden_states
 
 
 class BaseOutput(OrderedDict):
@@ -393,10 +453,8 @@ class UNetMidBlock2D(nn.Module):
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
 
-    # def forward(self, hidden_states: torch.Tensor, temb = None):
     def forward(self, hidden_states: torch.Tensor):
         # todos.debug.output_var("hidden_states1", hidden_states)
-        # todos.debug.output_var("temb", temb)
 
         # (Pdb) self.attentions
         # ModuleList(
@@ -421,11 +479,8 @@ class UNetMidBlock2D(nn.Module):
         #     (nonlinearity): SiLU()
         #   )
         # )
-        # hidden_states = self.resnets[0](hidden_states, temb)
         hidden_states = self.resnets[0](hidden_states)
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
-            # hidden_states = attn(hidden_states, temb=temb)
-            # hidden_states = resnet(hidden_states, temb)
             hidden_states = attn(hidden_states)
             hidden_states = resnet(hidden_states)
         # todos.debug.output_var("hidden_states2", hidden_states)
@@ -767,7 +822,6 @@ class DownEncoderBlock2D(nn.Module):
 
     def forward(self, hidden_states):
         for resnet in self.resnets:
-            # hidden_states = resnet(hidden_states, temb=None)
             hidden_states = resnet(hidden_states)
 
         if self.downsamplers is not None:
@@ -908,16 +962,12 @@ class ResnetBlock2D(nn.Module):
         else:
             self.conv_shortcut = None
 
-    # def forward(self, input_tensor, temb):
     def forward(self, input_tensor):
         hidden_states = input_tensor
         hidden_states = self.norm1(hidden_states)
         hidden_states = self.nonlinearity(hidden_states)
         hidden_states = self.conv1(hidden_states)
 
-        # assert temb == None
-        # if temb is not None:
-        #     hidden_states = hidden_states + temb
         hidden_states = self.norm2(hidden_states)
         hidden_states = self.nonlinearity(hidden_states)
         hidden_states = self.conv2(hidden_states)
@@ -979,7 +1029,6 @@ class TemporalResnetBlock(nn.Module):
             self.conv_shortcut = None
 
 
-    # def forward(self, input_tensor: torch.Tensor, temb: torch.Tensor):
     def forward(self, input_tensor):
         hidden_states = input_tensor
 
@@ -1029,11 +1078,9 @@ class SpatioTemporalResBlock(nn.Module):
 
     def forward(self,
         hidden_states,
-        # temb = None,
         image_only_indicator = None,
     ):
         num_frames = image_only_indicator.shape[-1]
-        # hidden_states = self.spatial_res_block(hidden_states, temb)
         hidden_states = self.spatial_res_block(hidden_states)
 
         batch_frames, channels, height, width = hidden_states.shape
@@ -1046,10 +1093,6 @@ class SpatioTemporalResBlock(nn.Module):
             hidden_states[None, :].reshape(batch_size, num_frames, channels, height, width).permute(0, 2, 1, 3, 4)
         )
 
-        # if temb is not None:
-        #     temb = temb.reshape(batch_size, num_frames, -1)
-
-        # hidden_states = self.temporal_res_block(hidden_states, temb)
         hidden_states = self.temporal_res_block(hidden_states)
         hidden_states = self.time_mixer(
             x_spatial=hidden_states_mix,
@@ -1079,78 +1122,78 @@ class AlphaBlender(nn.Module):
         return x
 
 # xxxx_debug
-class AttnProcessor2_0:
-    def __init__(self):
-        if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
+# class AttnProcessor2_0:
+#     def __init__(self):
+#         if not hasattr(F, "scaled_dot_product_attention"):
+#             raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
 
-    def __call__(self,
-        attn: Attention,
-        hidden_states: torch.Tensor,
-        encoder_hidden_states = None,
-        attention_mask = None,
-        temb = None,
-    ):
-        residual = hidden_states
-        input_ndim = hidden_states.ndim
+#     def __call__(self,
+#         attn: Attention,
+#         hidden_states: torch.Tensor,
+#         encoder_hidden_states = None,
+#         attention_mask = None,
+#         # temb = None,
+#     ):
+#         residual = hidden_states
+#         input_ndim = hidden_states.ndim
 
-        if input_ndim == 4:
-            # ==> pdb.set_trace()
-            batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+#         if input_ndim == 4:
+#             # ==> pdb.set_trace()
+#             batch_size, channel, height, width = hidden_states.shape
+#             hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
-        batch_size, sequence_length, _ = (
-            hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
-        )
+#         batch_size, sequence_length, _ = (
+#             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
+#         )
 
-        # assert  attention_mask is not None
-        if attention_mask is not None:
-            # ==> pdb.set_trace()
-            attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-            attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
+#         # assert  attention_mask is not None
+#         if attention_mask is not None:
+#             # ==> pdb.set_trace()
+#             attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+#             attention_mask = attention_mask.view(batch_size, attn.heads, -1, attention_mask.shape[-1])
 
-        if attn.group_norm is not None:
-            # ==> pdb.set_trace()
-            hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
+#         if attn.group_norm is not None:
+#             # ==> pdb.set_trace()
+#             hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
 
-        query = attn.to_q(hidden_states)
+#         query = attn.to_q(hidden_states)
 
-        if encoder_hidden_states is None:
-            encoder_hidden_states = hidden_states
-        elif attn.norm_cross:
-            encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
+#         if encoder_hidden_states is None:
+#             encoder_hidden_states = hidden_states
+#         elif attn.norm_cross:
+#             encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
 
-        key = attn.to_k(encoder_hidden_states)
-        value = attn.to_v(encoder_hidden_states)
+#         key = attn.to_k(encoder_hidden_states)
+#         value = attn.to_v(encoder_hidden_states)
 
-        inner_dim = key.shape[-1]
-        head_dim = inner_dim // attn.heads
+#         inner_dim = key.shape[-1]
+#         head_dim = inner_dim // attn.heads
 
-        query = query.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+#         query = query.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
 
-        key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
-        value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+#         key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+#         value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
 
-        hidden_states = F.scaled_dot_product_attention(
-            query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
-        )
+#         hidden_states = F.scaled_dot_product_attention(
+#             query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+#         )
 
-        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
-        hidden_states = hidden_states.to(query.dtype)
+#         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+#         hidden_states = hidden_states.to(query.dtype)
 
-        # linear proj
-        hidden_states = attn.to_out[0](hidden_states)
-        # dropout
-        # hidden_states = attn.to_out[1](hidden_states)
+#         # linear proj
+#         hidden_states = attn.to_out[0](hidden_states)
+#         # dropout
+#         # hidden_states = attn.to_out[1](hidden_states)
 
-        if input_ndim == 4:
-            # ==> pdb.set_trace()
-            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+#         if input_ndim == 4:
+#             # ==> pdb.set_trace()
+#             hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
 
-        if attn.residual_connection: # True
-            hidden_states = hidden_states + residual
+#         if attn.residual_connection: # True
+#             hidden_states = hidden_states + residual
 
-        return hidden_states
+#         return hidden_states
 
 
 if __name__ == "__main__":
