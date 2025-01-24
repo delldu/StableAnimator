@@ -241,7 +241,7 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
     def __init__(self,
         in_channels: int = 3,
         out_channels: int = 3,
-        down_block_types = ['DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D'],
+        # down_block_types = ['DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D'],
         block_out_channels = [128, 256, 512, 512],
         layers_per_block: int = 2,
         latent_channels: int = 4,
@@ -253,7 +253,7 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
         self.encoder = Encoder(
             in_channels=in_channels,
             out_channels=latent_channels,
-            down_block_types=down_block_types,
+            # down_block_types=down_block_types,
             block_out_channels=block_out_channels,
             layers_per_block=layers_per_block,
         )
@@ -279,10 +279,10 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
 
     # @apply_forward_hook
     def encode(self, x: torch.Tensor, return_dict: bool = True):
-        # todos.debug.output_var("encode x", x)
+        # tensor [x] size: [1, 3, 512, 512], min: -1.085592, max: 1.066735, mean: -0.045391
         h = self.encoder(x)
         moments = self.quant_conv(h)
-        # todos.debug.output_var("encode moments", moments)
+        # tensor [moments] size: [1, 8, 64, 64], min: -56.005188, max: 35.71368, mean: -9.935047
 
         posterior = DiagonalGaussianDistribution(moments)
 
@@ -299,12 +299,12 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
     ):
         # num_frames = 4
         # return_dict = True
-        # todos.debug.output_var("decode z", z)
+        assert num_frames == 4
+        # tensor [decode z] size: [4, 4, 64, 64], min: -35.8125, max: 41.1875, mean: -0.8983
         batch_size = z.shape[0] // num_frames
         image_only_indicator = torch.zeros(batch_size, num_frames, dtype=z.dtype, device=z.device)
         decoded = self.decoder(z, num_frames=num_frames, image_only_indicator=image_only_indicator)
-
-        # todos.debug.output_var("decode out", decoded)
+        # tensor [decoded] size: [4, 3, 512, 512], min: -1.092773, max: 1.15332, mean: -0.015342
 
         if not return_dict:
             return (decoded,)
@@ -393,8 +393,8 @@ class UNetMidBlock2D(nn.Module):
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
 
-    def forward(self, hidden_states: torch.Tensor, temb = None):
-        assert temb == None
+    # def forward(self, hidden_states: torch.Tensor, temb = None):
+    def forward(self, hidden_states: torch.Tensor):
         # todos.debug.output_var("hidden_states1", hidden_states)
         # todos.debug.output_var("temb", temb)
 
@@ -421,10 +421,13 @@ class UNetMidBlock2D(nn.Module):
         #     (nonlinearity): SiLU()
         #   )
         # )
-        hidden_states = self.resnets[0](hidden_states, temb)
+        # hidden_states = self.resnets[0](hidden_states, temb)
+        hidden_states = self.resnets[0](hidden_states)
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
-            hidden_states = attn(hidden_states, temb=temb)
-            hidden_states = resnet(hidden_states, temb)
+            # hidden_states = attn(hidden_states, temb=temb)
+            # hidden_states = resnet(hidden_states, temb)
+            hidden_states = attn(hidden_states)
+            hidden_states = resnet(hidden_states)
         # todos.debug.output_var("hidden_states2", hidden_states)
 
         return hidden_states
@@ -513,11 +516,13 @@ class TemporalDecoder(nn.Module):
         batch_frames, channels, height, width = sample.shape
         batch_size = batch_frames // num_frames
         sample = sample[None, :].reshape(batch_size, num_frames, channels, height, width).permute(0, 2, 1, 3, 4)
+        # tensor [sample1] size: [1, 3, 4, 512, 512], min: -5.296875, max: 3.916016, mean: -0.315182
         sample = self.time_conv_out(sample)
+        # tensor [sample2] size: [1, 3, 4, 512, 512], min: -1.197266, max: 1.191406, mean: -0.004497
 
         # todos.debug.output_var("sample1", sample)
         sample = sample.permute(0, 2, 1, 3, 4).reshape(batch_frames, channels, height, width)
-        # todos.debug.output_var("sample3", sample)
+        # todos.debug.output_var("sample2", sample)
 
         return sample
 
@@ -527,7 +532,7 @@ class Encoder(nn.Module):
     def __init__(self,
         in_channels: int = 3,
         out_channels: int = 4,
-        down_block_types = ['DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D'],
+        # down_block_types = ['DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D'],
         block_out_channels = [128, 256, 512, 512],
         layers_per_block: int = 2,
         norm_num_groups: int = 32,
@@ -545,7 +550,7 @@ class Encoder(nn.Module):
 
         # down
         output_channel = block_out_channels[0]
-        for i, down_block_type in enumerate(down_block_types):
+        for i, down_block_type in enumerate(block_out_channels):
             input_channel = output_channel
             output_channel = block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
@@ -710,6 +715,7 @@ class UpBlockTemporalDecoder(nn.Module):
                 image_only_indicator=image_only_indicator,
             )
 
+        # assert self.upsamplers is not None
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
                 hidden_states = upsampler(hidden_states)
@@ -761,7 +767,8 @@ class DownEncoderBlock2D(nn.Module):
 
     def forward(self, hidden_states):
         for resnet in self.resnets:
-            hidden_states = resnet(hidden_states, temb=None)
+            # hidden_states = resnet(hidden_states, temb=None)
+            hidden_states = resnet(hidden_states)
 
         if self.downsamplers is not None:
             for downsampler in self.downsamplers:
@@ -784,6 +791,7 @@ class Downsample2D(nn.Module):
         self.out_channels = out_channels or channels
         self.use_conv = use_conv
 
+        assert use_conv == True
         if use_conv:
             conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, stride=2, padding=padding, bias=True)
         else:
@@ -818,6 +826,7 @@ class Upsample2D(nn.Module):
         self.out_channels = out_channels or channels
         self.use_conv = use_conv
 
+        assert use_conv == True
         if use_conv:
             conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, padding=1, bias=True)
         else:
@@ -870,12 +879,12 @@ class ResnetBlock2D(nn.Module):
         eps: float = 1e-6,
         non_linearity: str = "silu",
 
-        conv_shortcut: bool = False,
+        # conv_shortcut: bool = False,
     ):
         super().__init__()
-        assert conv_shortcut == False
+        # assert conv_shortcut == False
 
-
+        assert out_channels is not None
         self.in_channels = in_channels
         out_channels = in_channels if out_channels is None else out_channels
         self.out_channels = out_channels
@@ -887,7 +896,6 @@ class ResnetBlock2D(nn.Module):
         self.nonlinearity = nn.SiLU() # get_activation(non_linearity)
         self.use_in_shortcut = self.in_channels != out_channels
 
-        self.conv_shortcut = None
         if self.use_in_shortcut:
             self.conv_shortcut = nn.Conv2d(
                 in_channels,
@@ -897,8 +905,11 @@ class ResnetBlock2D(nn.Module):
                 padding=0,
                 bias=True,
             )
+        else:
+            self.conv_shortcut = None
 
-    def forward(self, input_tensor, temb):
+    # def forward(self, input_tensor, temb):
+    def forward(self, input_tensor):
         hidden_states = input_tensor
         hidden_states = self.norm1(hidden_states)
         hidden_states = self.nonlinearity(hidden_states)
@@ -932,6 +943,7 @@ class TemporalResnetBlock(nn.Module):
         # out_channels = 512
         # eps = 1e-05
         
+        assert out_channels is not None
         self.in_channels = in_channels
         out_channels = in_channels if out_channels is None else out_channels
         self.out_channels = out_channels
@@ -946,8 +958,8 @@ class TemporalResnetBlock(nn.Module):
             padding=padding,
         )
 
+        # xxxx_debug
         self.norm2 = nn.GroupNorm(num_groups=32, num_channels=out_channels, eps=eps, affine=True)
-
         self.conv2 = nn.Conv3d(out_channels, out_channels,
             kernel_size=kernel_size,
             stride=1,
@@ -967,16 +979,21 @@ class TemporalResnetBlock(nn.Module):
             self.conv_shortcut = None
 
 
-    def forward(self, input_tensor: torch.Tensor, temb: torch.Tensor):
+    # def forward(self, input_tensor: torch.Tensor, temb: torch.Tensor):
+    def forward(self, input_tensor):
         hidden_states = input_tensor
 
         hidden_states = self.norm1(hidden_states)
         hidden_states = self.nonlinearity(hidden_states)
+        # tensor [hidden_states1] size: [1, 512, 4, 64, 64], min: -0.278564, max: 33.3125, mean: 0.150598
         hidden_states = self.conv1(hidden_states)
+        # tensor [hidden_states2] size: [1, 512, 4, 64, 64], min: -193.625, max: 17.5, mean: 0.080203
 
         hidden_states = self.norm2(hidden_states)
         hidden_states = self.nonlinearity(hidden_states)
+        # tensor [hidden_states3] size: [1, 512, 4, 64, 64], min: -0.278564, max: 17.9375, mean: 0.021441
         hidden_states = self.conv2(hidden_states)
+        # tensor [hidden_states4] size: [1, 512, 4, 64, 64], min: -16.4375, max: 15.179688, mean: -0.033997
 
         if self.conv_shortcut is not None:
             input_tensor = self.conv_shortcut(input_tensor)
@@ -1012,11 +1029,12 @@ class SpatioTemporalResBlock(nn.Module):
 
     def forward(self,
         hidden_states,
-        temb = None,
+        # temb = None,
         image_only_indicator = None,
     ):
         num_frames = image_only_indicator.shape[-1]
-        hidden_states = self.spatial_res_block(hidden_states, temb)
+        # hidden_states = self.spatial_res_block(hidden_states, temb)
+        hidden_states = self.spatial_res_block(hidden_states)
 
         batch_frames, channels, height, width = hidden_states.shape
         batch_size = batch_frames // num_frames
@@ -1028,10 +1046,11 @@ class SpatioTemporalResBlock(nn.Module):
             hidden_states[None, :].reshape(batch_size, num_frames, channels, height, width).permute(0, 2, 1, 3, 4)
         )
 
-        if temb is not None:
-            temb = temb.reshape(batch_size, num_frames, -1)
+        # if temb is not None:
+        #     temb = temb.reshape(batch_size, num_frames, -1)
 
-        hidden_states = self.temporal_res_block(hidden_states, temb)
+        # hidden_states = self.temporal_res_block(hidden_states, temb)
+        hidden_states = self.temporal_res_block(hidden_states)
         hidden_states = self.time_mixer(
             x_spatial=hidden_states_mix,
             x_temporal=hidden_states,
