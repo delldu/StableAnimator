@@ -209,8 +209,6 @@ class UNetSpatioTemporalConditionModel(nn.Module):
         if pose_latents is not None:
             sample = sample + pose_latents
 
-        image_only_indicator = torch.zeros(batch_size, num_frames, dtype=sample.dtype, device=sample.device)
-
         down_block_res_samples = (sample,)
         #     ['CrossAttnDownBlockSpatioTemporal', 'CrossAttnDownBlockSpatioTemporal',
         #     'CrossAttnDownBlockSpatioTemporal', 'DownBlockSpatioTemporal']
@@ -222,14 +220,12 @@ class UNetSpatioTemporalConditionModel(nn.Module):
                     hidden_states=sample,
                     temb=emb,
                     encoder_hidden_states=encoder_hidden_states,
-                    image_only_indicator=image_only_indicator,
                 )
             else:
                 # downsample_block -- DownBlockSpatioTemporal
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
                     temb=emb,
-                    image_only_indicator=image_only_indicator,
                 )
 
             down_block_res_samples += res_samples
@@ -239,7 +235,6 @@ class UNetSpatioTemporalConditionModel(nn.Module):
             hidden_states=sample,
             temb=emb,
             encoder_hidden_states=encoder_hidden_states,
-            image_only_indicator=image_only_indicator,
         )
 
         # 5. up
@@ -270,7 +265,6 @@ class UNetSpatioTemporalConditionModel(nn.Module):
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
                     encoder_hidden_states=encoder_hidden_states,  # diff !!!
-                    image_only_indicator=image_only_indicator,
                 )
             else:
                 # upsample_block -- CrossAttnUpBlockSpatioTemporal
@@ -278,7 +272,6 @@ class UNetSpatioTemporalConditionModel(nn.Module):
                     hidden_states=sample,
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
-                    image_only_indicator=image_only_indicator,
                 )
 
         # 6. post-process
@@ -352,12 +345,8 @@ class AlphaBlender(nn.Module):
         super().__init__()
         self.register_parameter("mix_factor", nn.Parameter(torch.Tensor([alpha])))
 
-    def get_alpha(self, image_only_indicator, ndims):
-        alpha = torch.where(
-            image_only_indicator.bool(),
-            torch.ones(1, 1, device=image_only_indicator.device),
-            torch.sigmoid(self.mix_factor)[..., None],
-        )
+    def get_alpha(self, ndims):
+        alpha = torch.sigmoid(self.mix_factor)[..., None]
 
         # (batch, channel, frames, height, width)
         alpha = alpha.reshape(-1)[:, None, None]
@@ -370,13 +359,11 @@ class AlphaBlender(nn.Module):
         self,
         x_spatial,
         x_temporal,
-        image_only_indicator=None,
     ):
         # tensor [x_spatial] size: [16, 4096, 320], min: -2.132812, max: 1.702148, mean: -0.039416
         # tensor [x_temporal] size: [16, 4096, 320], min: -4.917969, max: 5.1875, mean: -0.088254
-        # tensor [AlphaBlender image_only_indicator] size: [1, 16], min: 0.0, max: 0.0, mean: 0.0
 
-        alpha = self.get_alpha(image_only_indicator, x_spatial.ndim)
+        alpha = self.get_alpha(x_spatial.ndim)
         alpha = alpha.to(x_spatial.dtype)
 
         x = alpha * x_spatial + (1.0 - alpha) * x_temporal
@@ -406,7 +393,6 @@ class BasicTransformerBlock(nn.Module):
             query_dim=dim,
             heads=num_attention_heads,
             dim_head=attention_head_dim,
-            bias=False,
             cross_attention_dim=None,
         )
 
@@ -417,7 +403,6 @@ class BasicTransformerBlock(nn.Module):
             cross_attention_dim=cross_attention_dim,
             heads=num_attention_heads,
             dim_head=attention_head_dim,
-            bias=False,
         )  # AnimationIDAttention
 
         # 3. Feed-forward
@@ -435,7 +420,7 @@ class BasicTransformerBlock(nn.Module):
         batch_size = hidden_states.shape[0]
         norm_hidden_states = self.norm1(hidden_states)
 
-        attn_output = self.attn1(norm_hidden_states, encoder_hidden_states=None)
+        attn_output = self.attn1(norm_hidden_states)
         hidden_states = attn_output + hidden_states
 
         # 2. Cross-Attention
@@ -514,17 +499,14 @@ class TransformerSpatioTemporalModel(nn.Module):
         self.proj_out = nn.Linear(hidden_size, in_channels)
         # self.proj_out -- Linear(in_features=320, out_features=320, bias=True)
 
-        self.gradient_checkpointing = False
         self.num_tokens = num_tokens
 
-    def forward(self, hidden_states, encoder_hidden_states, image_only_indicator):
+    def forward(self, hidden_states, encoder_hidden_states):
         # tensor [hidden_states] size: [16, 320, 64, 64], min: -17.109375, max: 39.46875, mean: 0.010112
         # tensor [encoder_hidden_states] size: [16, 5, 1024], min: -14.492188, max: 14.453125, mean: 0.000888
-        # tensor [image_only_indicator] size: [1, 16], min: 0.0, max: 0.0, mean: 0.0
-
         # 1. Input
         batch_frames, _, height, width = hidden_states.shape  # size: [16, 320, 64, 64]
-        num_frames = image_only_indicator.shape[-1]  # size: [1, 16]
+        num_frames = hidden_states.shape[0]
         batch_size = batch_frames // num_frames  # ==> 1
 
         end_pos = encoder_hidden_states.shape[1] - self.num_tokens  # ==> 1
@@ -573,7 +555,6 @@ class TransformerSpatioTemporalModel(nn.Module):
             hidden_states = self.time_mixer(
                 x_spatial=hidden_states,
                 x_temporal=hidden_states_mix,
-                image_only_indicator=image_only_indicator,
             )
 
         # 3. Output
@@ -690,7 +671,7 @@ class TemporalBasicTransformerBlock(nn.Module):
         hidden_states = hidden_states + residual
 
         norm_hidden_states = self.norm1(hidden_states)
-        attn_output = self.attn1(norm_hidden_states, encoder_hidden_states=None)
+        attn_output = self.attn1(norm_hidden_states, encoder_hidden_states=norm_hidden_states)
         hidden_states = attn_output + hidden_states
 
         # 3. Cross-Attention
@@ -770,19 +751,17 @@ class UNetMidBlockSpatioTemporal(nn.Module):
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
 
-    def forward(self, hidden_states, temb=None, encoder_hidden_states=None, image_only_indicator=None):
-        hidden_states = self.resnets[0](hidden_states, temb, image_only_indicator=image_only_indicator)
+    def forward(self, hidden_states, temb=None, encoder_hidden_states=None):
+        hidden_states = self.resnets[0](hidden_states, temb)
 
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
             hidden_states = attn(
                 hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
-                image_only_indicator=image_only_indicator,
             )[0]
             hidden_states = resnet(
                 hidden_states,
                 temb,
-                image_only_indicator=image_only_indicator,
             )
 
         return hidden_states
@@ -812,10 +791,10 @@ class DownBlockSpatioTemporal(nn.Module):
             )
         self.resnets = nn.ModuleList(resnets)
 
-    def forward(self, hidden_states, temb=None, image_only_indicator=None):
+    def forward(self, hidden_states, temb=None):
         output_states = ()
         for resnet in self.resnets:
-            hidden_states = resnet(hidden_states, temb, image_only_indicator=image_only_indicator)
+            hidden_states = resnet(hidden_states, temb)
             output_states = output_states + (hidden_states,)
 
         return hidden_states, output_states
@@ -880,7 +859,7 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
             ]
         )
 
-    def forward(self, hidden_states, temb=None, encoder_hidden_states=None, image_only_indicator=None):
+    def forward(self, hidden_states, temb=None, encoder_hidden_states=None):
         output_states = ()
 
         blocks = list(zip(self.resnets, self.attentions))
@@ -888,13 +867,11 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
             hidden_states = resnet(
                 hidden_states,
                 temb,
-                image_only_indicator=image_only_indicator,
             )
             # attn -- TransformerSpatioTemporalModel
             hidden_states = attn(
                 hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
-                image_only_indicator=image_only_indicator,
             )[0]
 
             output_states = output_states + (hidden_states,)
@@ -939,7 +916,6 @@ class UpBlockSpatioTemporal(nn.Module):
         hidden_states,
         res_hidden_states_tuple,
         temb=None,
-        image_only_indicator=None,
     ):
         for resnet in self.resnets:
             # pop res hidden states
@@ -951,7 +927,6 @@ class UpBlockSpatioTemporal(nn.Module):
             hidden_states = resnet(
                 hidden_states,
                 temb,
-                image_only_indicator=image_only_indicator,
             )
 
         for upsampler in self.upsamplers:
@@ -1027,7 +1002,6 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
         res_hidden_states_tuple,
         temb=None,
         encoder_hidden_states=None,
-        image_only_indicator=None,
     ):
         for resnet, attn in zip(self.resnets, self.attentions):
             # pop res hidden states
@@ -1039,12 +1013,10 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
             hidden_states = resnet(
                 hidden_states,
                 temb,
-                image_only_indicator=image_only_indicator,
             )
             hidden_states = attn(
                 hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
-                image_only_indicator=image_only_indicator,
             )[0]
 
         if self.upsamplers is not None:  # True
@@ -1181,9 +1153,8 @@ class SpatioTemporalResBlock(nn.Module):
         self,
         hidden_states,
         temb=None,
-        image_only_indicator=None,
     ):
-        num_frames = image_only_indicator.shape[-1]
+        num_frames = hidden_states.shape[0]
         hidden_states = self.spatial_res_block(hidden_states, temb)
 
         batch_frames, channels, height, width = hidden_states.shape
@@ -1203,7 +1174,6 @@ class SpatioTemporalResBlock(nn.Module):
         hidden_states = self.time_mixer(
             x_spatial=hidden_states_mix,
             x_temporal=hidden_states,
-            image_only_indicator=image_only_indicator,
         )
 
         hidden_states = hidden_states.permute(0, 2, 1, 3, 4).reshape(batch_frames, channels, height, width)
@@ -1410,15 +1380,12 @@ class TemporalAttention(nn.Module):
         cross_attention_dim=None,  # 1024 or None
         heads=5,
         dim_head=64,
-        bias=False,
-        # processor = None,
     ):
         super().__init__()
         self.head_size = heads  # !!!
 
         self.hidden_size = dim_head * heads  # hidden_size ???
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
-        self.residual_connection = False
         self.out_dim = query_dim
         self.scale = dim_head**-0.5
 
@@ -1438,12 +1405,8 @@ class TemporalAttention(nn.Module):
         residual = hidden_states
 
         query = self.to_q(hidden_states)
-
-        if encoder_hidden_states is None:
-            encoder_hidden_states = hidden_states
         key = self.to_k(encoder_hidden_states)
         value = self.to_v(encoder_hidden_states)
-
         query = self.head_to_batch_dim(query).contiguous()
         key = self.head_to_batch_dim(key).contiguous()
         value = self.head_to_batch_dim(value).contiguous()
@@ -1489,24 +1452,16 @@ class AnimationAttention(nn.Module):
         cross_attention_dim=None,  # 1024 or None
         heads=5,
         dim_head=64,
-        bias=False,
-        # processor = None,
     ):
         super().__init__()
         self.head_size = heads  # !!!
 
         self.hidden_size = dim_head * heads  # hidden_size ???
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
-        self.residual_connection = False
         self.out_dim = query_dim
-
         self.scale = dim_head**-0.5
-        self.heads = heads
-        self.group_norm = None
-        self.spatial_norm = None
 
         # cross_attention_dim == 1024 or None
-        self.norm_cross = None
         self.to_q = nn.Linear(query_dim, self.hidden_size, bias=False)
         self.to_k = nn.Linear(self.cross_attention_dim, self.hidden_size, bias=False)
         self.to_v = nn.Linear(self.cross_attention_dim, self.hidden_size, bias=False)
@@ -1515,13 +1470,10 @@ class AnimationAttention(nn.Module):
         self.to_out.append(nn.Linear(self.hidden_size, self.out_dim, bias=True))
         self.to_out.append(nn.Dropout(0.0))
 
-    def forward(self, hidden_states, encoder_hidden_states=None):
+    def forward(self, hidden_states):
         # tensor [hidden_states] size: [16, 4096, 320], min: -10.609375, max: 32.09375, mean: 0.12576
-        # [encoder_hidden_states] type: <class 'NoneType'>
-        # [attention_mask] type: <class 'NoneType'>
 
-        # attention_mask = None
-        # temb = None
+        # [encoder_hidden_states] type: <class 'NoneType'>
         # (Pdb) attn
         # Attention(
         #   (to_q): Linear(in_features=320, out_features=320, bias=False)
@@ -1531,18 +1483,12 @@ class AnimationAttention(nn.Module):
         #     (0): Linear(in_features=320, out_features=320, bias=True)
         #     (1): Dropout(p=0.0, inplace=False)
         #   )
-        #   (processor): AnimationAttention()
         # )
         # tensor [hidden_states] size: [16, 4096, 320], min: -0.878906, max: 1.689453, mean: 0.00032
         assert hidden_states is not None
         query = self.to_q(hidden_states)
-
-        if encoder_hidden_states is None:
-            # ==> pdb.set_trace()
-            encoder_hidden_states = hidden_states
-
-        key = self.to_k(encoder_hidden_states)
-        value = self.to_v(encoder_hidden_states)
+        key = self.to_k(hidden_states)
+        value = self.to_v(hidden_states)
 
         query = self.head_to_batch_dim(query).contiguous()
         key = self.head_to_batch_dim(key).contiguous()
@@ -1613,8 +1559,6 @@ class AnimationIDAttention(nn.Module):
         cross_attention_dim=None,  # 1024 or None
         heads=5,
         dim_head=64,
-        bias=False,
-        # processor = None,
     ):
         super().__init__()
         self.head_size = heads  # !!!
@@ -1626,11 +1570,8 @@ class AnimationIDAttention(nn.Module):
 
         self.scale = dim_head**-0.5
         self.heads = heads
-        self.group_norm = None
-        self.spatial_norm = None
 
         # cross_attention_dim == 1024 or None
-        self.norm_cross = None
         self.to_q = nn.Linear(query_dim, self.hidden_size, bias=False)
         self.to_k = nn.Linear(self.cross_attention_dim, self.hidden_size, bias=False)
         self.to_v = nn.Linear(self.cross_attention_dim, self.hidden_size, bias=False)
@@ -1762,16 +1703,14 @@ if __name__ == "__main__":
     # tensor [encoder_hidden_states] size: [1, 5, 1024], min: 0.0, max: 0.0, mean: 0.0
     # tensor [added_time_ids] size: [1, 3], min: 0.020004, max: 127.0, mean: 44.340004
     # pose_latents = None
-    # image_only_indicator = False
     sample = torch.randn(1, 16, 8, 64, 64).to(device)
     timesteps = torch.randn(1).to(device)
     encoder_hidden_states = torch.randn(1, 5, 1024).to(device)
     added_time_ids = torch.randn(1, 3).to(device)
     # pose_latents = None
-    # image_only_indicator = False
 
     with torch.no_grad():
-        # unet_output = unet(sample, timesteps, encoder_hidden_states, added_time_ids, pose_latents, image_only_indicator)
+        # unet_output = unet(sample, timesteps, encoder_hidden_states, added_time_ids, pose_latents)
         unet_output = unet(sample, timesteps, encoder_hidden_states, added_time_ids)
 
     todos.debug.output_var("unet_output", unet_output)
