@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import inspect
 from collections import OrderedDict
 
 import torch
@@ -21,60 +20,27 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils.torch_utils import randn_tensor
-from diffusers.utils import is_torch_version, logging
-from diffusers.utils.import_utils import is_torch_available
+from diffusers.utils import logging
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
-
 
 import pdb
 import todos
 
 # ------------------------------
 class Attention(nn.Module):
-    """
-                in_channels,
-                heads=in_channels // attention_head_dim,
-                dim_head=attention_head_dim,
-                eps=resnet_eps,
-                norm_num_groups=resnet_groups,
-                spatial_norm_dim=None,
-                residual_connection=True,
-                bias=True,
-                upcast_softmax=True,
-    ------------------------------------------------------------------------------------                        
-                query_dim=in_channels,
-                heads=in_channels // attention_head_dim,
-                dim_head=attention_head_dim,
-                eps=1e-6,
-                norm_num_groups=32,
-                bias=True,
-                residual_connection=True,    
-    """
     def __init__(self,
         query_dim: int,
         heads: int = 8,
         dim_head: int = 64,
-        # bias: bool = True,
-        # upcast_softmax: bool = False,
         norm_num_groups = None,
-        # spatial_norm_dim = None,
         eps: float = 1e-6,
-        # residual_connection: bool = True,
-
-        # processor = None,
     ):
         super().__init__()
-
-        # To prevent circular import.
-        # from .normalization import FP32LayerNorm, RMSNorm
-        # assert processor == None
 
         self.heads = heads
         self.inner_dim = dim_head * heads
         self.cross_attention_dim = query_dim
-        # self.upcast_softmax = upcast_softmax
-        # self.residual_connection = residual_connection # !!!
         self.out_dim = query_dim
         self.scale = dim_head**-0.5
 
@@ -83,15 +49,7 @@ class Attention(nn.Module):
         else:
             self.group_norm = None
 
-        # self.spatial_norm = None # !!!
-        # self.norm_q = None
-        # self.norm_k = None
-        # self.norm_cross = None
-
-
         self.to_q = nn.Linear(query_dim, self.inner_dim, bias=True)
-
-        # only relevant for the `AddedKVProcessor` classes
         self.to_k = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=True)
         self.to_v = nn.Linear(self.cross_attention_dim, self.inner_dim, bias=True)
 
@@ -99,37 +57,21 @@ class Attention(nn.Module):
         self.to_out.append(nn.Linear(self.inner_dim, self.out_dim, bias=True))
         self.to_out.append(nn.Dropout(0.0))
 
-        # if processor is None:
-        #     processor = AttnProcessor2_0()
-        # self.set_processor(processor)
-
-    # def set_processor(self, processor):
-    #     self.processor = processor
-
     def forward(self,
         hidden_states: torch.Tensor,
         encoder_hidden_states = None,
-        attention_mask = None,
     ):
+
         residual = hidden_states
         input_ndim = hidden_states.ndim
 
-        if input_ndim == 4:
-            # ==> pdb.set_trace()
-            batch_size, channel, height, width = hidden_states.shape
-            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
-        else:
-            pdb.set_trace()
+        batch_size, channel, height, width = hidden_states.shape
+        hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
 
         batch_size, sequence_length, _ = (
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
 
-        # assert  attention_mask is not None
-        if attention_mask is not None:
-            pdb.set_trace()
-            attention_mask = self.prepare_attention_mask(attention_mask, sequence_length, batch_size)
-            attention_mask = attention_mask.view(batch_size, self.heads, -1, attention_mask.shape[-1])
 
         if self.group_norm is not None:
             # ==> pdb.set_trace()
@@ -139,22 +81,19 @@ class Attention(nn.Module):
 
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
-        # elif self.norm_cross:
-        #     encoder_hidden_states = self.norm_encoder_hidden_states(encoder_hidden_states)
 
         key = self.to_k(encoder_hidden_states)
         value = self.to_v(encoder_hidden_states)
 
         inner_dim = key.shape[-1]
         head_dim = inner_dim // self.heads
-
         query = query.view(batch_size, -1, self.heads, head_dim).transpose(1, 2)
 
         key = key.view(batch_size, -1, self.heads, head_dim).transpose(1, 2)
         value = value.view(batch_size, -1, self.heads, head_dim).transpose(1, 2)
 
         hidden_states = F.scaled_dot_product_attention(
-            query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+            query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False
         )
 
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, self.heads * head_dim)
@@ -166,7 +105,6 @@ class Attention(nn.Module):
         # hidden_states = self.to_out[1](hidden_states)
 
         hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
-
         hidden_states = hidden_states + residual
 
         return hidden_states
@@ -174,22 +112,12 @@ class Attention(nn.Module):
 
 class BaseOutput(OrderedDict):
     def __init_subclass__(cls) -> None:
-        if is_torch_available():
-            import torch.utils._pytree
-
-            if is_torch_version("<", "2.2"): # False
-                pdb.set_trace()
-                torch.utils._pytree._register_pytree_node(
-                    cls,
-                    torch.utils._pytree._dict_flatten,
-                    lambda values, context: cls(**torch.utils._pytree._dict_unflatten(values, context)),
-                )
-            else:
-                torch.utils._pytree.register_pytree_node(
-                    cls,
-                    torch.utils._pytree._dict_flatten,
-                    lambda values, context: cls(**torch.utils._pytree._dict_unflatten(values, context)),
-                )
+        import torch.utils._pytree
+        torch.utils._pytree.register_pytree_node(
+            cls,
+            torch.utils._pytree._dict_flatten,
+            lambda values, context: cls(**torch.utils._pytree._dict_unflatten(values, context)),
+        )
 
     def __post_init__(self) -> None:
         class_fields = fields(self)
@@ -250,23 +178,14 @@ class BaseOutput(OrderedDict):
 
 # !!! -------------------------------------
 class DiagonalGaussianDistribution(object):
-    def __init__(self, parameters: torch.Tensor, deterministic: bool = False):
+    def __init__(self, parameters: torch.Tensor):
         # tensor [parameters] size: [1, 8, 64, 64], min: -56.005188, max: 35.71368, mean: -9.935047
-        # deterministic = False
         self.parameters = parameters
         self.mean, self.logvar = torch.chunk(parameters, 2, dim=1)
         # ==> self.mean.size() -- [1, 4, 64, 64]
         self.logvar = torch.clamp(self.logvar, -30.0, 20.0)
-        self.deterministic = deterministic
         self.std = torch.exp(0.5 * self.logvar)
         self.var = torch.exp(self.logvar)
-
-        assert self.deterministic == False
-        if self.deterministic:
-            self.var = self.std = torch.zeros_like(
-                self.mean, device=self.parameters.device, dtype=self.parameters.dtype
-            )
-
 
     def sample(self, generator = None):
         # make sure sample is on the same device as the parameters and has same dtype
@@ -302,10 +221,10 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
     def __init__(self,
         in_channels: int = 3,
         out_channels: int = 3,
-        # down_block_types = ['DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D'],
         block_out_channels = [128, 256, 512, 512],
         layers_per_block: int = 2,
         latent_channels: int = 4,
+
         sample_size: int = 768,
         scaling_factor: float = 0.18215,
         force_upcast: float = True,
@@ -314,7 +233,6 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
         self.encoder = Encoder(
             in_channels=in_channels,
             out_channels=latent_channels,
-            # down_block_types=down_block_types,
             block_out_channels=block_out_channels,
             layers_per_block=layers_per_block,
         )
@@ -329,13 +247,7 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
 
         self.quant_conv = nn.Conv2d(2 * latent_channels, 2 * latent_channels, 1)
 
-        sample_size = (
-            self.config.sample_size[0]
-            if isinstance(self.config.sample_size, (list, tuple))
-            else self.config.sample_size
-        ) # 768
-        # self.config.block_out_channels -- [128, 256, 512, 512]
-        self.tile_latent_min_size = int(sample_size / (2 ** (len(block_out_channels) - 1))) # 96
+        self.tile_latent_min_size = 96
         self.tile_overlap_factor = 0.25
 
     # @apply_forward_hook
@@ -358,7 +270,6 @@ class AutoencoderKLTemporalDecoder(ModelMixin, ConfigMixin):
         num_frames: int,
         return_dict: bool = True,
     ):
-        # num_frames = 4
         # return_dict = True
         assert num_frames == 4
         # tensor [decode z] size: [4, 4, 64, 64], min: -35.8125, max: 41.1875, mean: -0.8983
@@ -403,16 +314,6 @@ class UNetMidBlock2D(nn.Module):
         num_layers: int = 1,
     ):
         super().__init__()
-        # in_channels = 512
-        # num_layers = 1
-        # resnet_eps = 1e-06
-        # resnet_groups = 32
-        # attention_head_dim = 512
-        assert num_layers == 1
-        assert num_layers == 1
-
-        resnet_groups = resnet_groups if resnet_groups is not None else min(in_channels // 4, 32)
-
         resnets = [
             ResnetBlock2D(
                 in_channels=in_channels,
@@ -433,10 +334,6 @@ class UNetMidBlock2D(nn.Module):
                     dim_head=attention_head_dim,
                     eps=resnet_eps,
                     norm_num_groups=resnet_groups,
-                    # spatial_norm_dim=None,
-                    # residual_connection=True,
-                    # bias=True,
-                    # upcast_softmax=True,
                 )
             )
             resnets.append(
@@ -586,7 +483,6 @@ class Encoder(nn.Module):
     def __init__(self,
         in_channels: int = 3,
         out_channels: int = 4,
-        # down_block_types = ['DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D', 'DownEncoderBlock2D'],
         block_out_channels = [128, 256, 512, 512],
         layers_per_block: int = 2,
         norm_num_groups: int = 32,
@@ -616,7 +512,6 @@ class Encoder(nn.Module):
                 add_downsample=not is_final_block,
                 resnet_eps=1e-6,
                 resnet_groups=norm_num_groups,
-                downsample_padding=0,
             )
 
             self.down_blocks.append(down_block)
@@ -667,13 +562,9 @@ class MidBlockTemporalDecoder(nn.Module):
         num_layers: int = 2,
     ):
         super().__init__()
-        # in_channels = 512
-        # out_channels = 512
-        # attention_head_dim = 512
-        # num_layers = 2
-
         resnets = []
         attentions = []
+
         assert num_layers == 2
         for i in range(num_layers): # 2
             input_channels = in_channels if i == 0 else out_channels
@@ -694,8 +585,6 @@ class MidBlockTemporalDecoder(nn.Module):
                 dim_head=attention_head_dim,
                 eps=1e-6,
                 norm_num_groups=32,
-                # bias=True,
-                # residual_connection=True,
             )
         )
 
@@ -727,19 +616,13 @@ class UpBlockTemporalDecoder(nn.Module):
     def __init__(self,
         in_channels: int,
         out_channels: int,
-        num_layers: int = 1,
-        add_upsample: bool = True,
+        num_layers: int = 3,
+        add_upsample: bool = True, # True or False
     ):
         super().__init__()
-        # in_channels = 512
-        # out_channels = 512
-        # num_layers = 3
-        # add_upsample = True
-
         resnets = []
         for i in range(num_layers):
             input_channels = in_channels if i == 0 else out_channels
-
             resnets.append(
                 SpatioTemporalResBlock(
                     in_channels=input_channels,
@@ -752,24 +635,20 @@ class UpBlockTemporalDecoder(nn.Module):
         self.resnets = nn.ModuleList(resnets)
 
         if add_upsample:
-            self.upsamplers = nn.ModuleList([Upsample2D(out_channels, use_conv=True, out_channels=out_channels)])
+            self.upsamplers = nn.ModuleList([Upsample2D(out_channels, out_channels=out_channels)])
         else:
             self.upsamplers = None
             
     def forward(self,
         hidden_states: torch.Tensor,
         image_only_indicator: torch.Tensor,
-    ) -> torch.Tensor:
+    ):
         # todos.debug.output_var("hidden_states7", hidden_states)
         # todos.debug.output_var("image_only_indicator", image_only_indicator)
 
         for resnet in self.resnets:
-            hidden_states = resnet(
-                hidden_states,
-                image_only_indicator=image_only_indicator,
-            )
+            hidden_states = resnet(hidden_states, image_only_indicator=image_only_indicator)
 
-        # assert self.upsamplers is not None
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
                 hidden_states = upsampler(hidden_states)
@@ -779,14 +658,21 @@ class UpBlockTemporalDecoder(nn.Module):
 
 # --------------------------------------
 class DownEncoderBlock2D(nn.Module):
+    """
+                in_channels=input_channel,
+                out_channels=output_channel,
+                num_layers=layers_per_block,
+                add_downsample=not is_final_block,
+                resnet_eps=1e-6,
+                resnet_groups=norm_num_groups,
+    """
     def __init__(self,
         in_channels,
         out_channels,
         num_layers = 1,
         resnet_eps = 1e-6,
         resnet_groups = 32,
-        add_downsample = True,
-        downsample_padding = 0,
+        add_downsample = True, # True | False
     ):
         super().__init__()
         # in_channels = 128
@@ -795,7 +681,6 @@ class DownEncoderBlock2D(nn.Module):
         # resnet_eps = 1e-06
         # resnet_groups = 32
         # add_downsample = True
-        # downsample_padding = 0        
                 
         resnets = []
         for i in range(num_layers):
@@ -813,7 +698,7 @@ class DownEncoderBlock2D(nn.Module):
         self.resnets = nn.ModuleList(resnets)
         if add_downsample:
             self.downsamplers = nn.ModuleList(
-                [ Downsample2D(out_channels, use_conv=True, out_channels=out_channels, padding=downsample_padding) ]
+                [ Downsample2D(out_channels, out_channels=out_channels, padding=0) ]
             )
         else:
             self.downsamplers = None
@@ -833,7 +718,6 @@ class DownEncoderBlock2D(nn.Module):
 class Downsample2D(nn.Module):
     def __init__(self,
         channels: int,
-        use_conv: bool = True,
         out_channels = None,
         padding: int = 1,
     ):
@@ -841,17 +725,7 @@ class Downsample2D(nn.Module):
 
         self.channels = channels
         self.out_channels = out_channels or channels
-        self.use_conv = use_conv
-
-        assert use_conv == True
-        if use_conv:
-            conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, stride=2, padding=padding, bias=True)
-        else:
-            assert self.channels == self.out_channels
-            conv = nn.AvgPool2d(kernel_size=2, stride=2)
-
-        # TODO(Suraj, Patrick) - clean up after weight dicts are correctly renamed
-        self.conv = conv
+        self.conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, stride=2, padding=padding, bias=True)
 
     def forward(self, hidden_states):
         assert hidden_states.shape[1] == self.channels
@@ -859,8 +733,7 @@ class Downsample2D(nn.Module):
         pad = (0, 1, 0, 1)
         hidden_states = F.pad(hidden_states, pad, mode="constant", value=0)
 
-        assert hidden_states.shape[1] == self.channels
-
+        # assert hidden_states.shape[1] == self.channels
         hidden_states = self.conv(hidden_states)
 
         return hidden_states
@@ -870,21 +743,12 @@ class Downsample2D(nn.Module):
 class Upsample2D(nn.Module):
     def __init__(self,
         channels: int,
-        use_conv: bool = False,
         out_channels = None,
     ):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
-        self.use_conv = use_conv
-
-        assert use_conv == True
-        if use_conv:
-            conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, padding=1, bias=True)
-        else:
-            conv = None
-
-        self.conv = conv
+        self.conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, padding=1, bias=True)
 
 
     def forward(self, hidden_states: torch.Tensor, output_size= None):
@@ -912,9 +776,7 @@ class Upsample2D(nn.Module):
         if dtype == torch.bfloat16:
             hidden_states = hidden_states.to(dtype)
 
-        # TODO(Suraj, Patrick) - clean up after weight dicts are correctly renamed
-        if self.use_conv: # True
-            hidden_states = self.conv(hidden_states)
+        hidden_states = self.conv(hidden_states)
 
         return hidden_states
 
@@ -964,7 +826,7 @@ class ResnetBlock2D(nn.Module):
         if self.conv_shortcut is not None:
             input_tensor = self.conv_shortcut(input_tensor)
 
-        output_tensor = (input_tensor + hidden_states)
+        output_tensor = input_tensor + hidden_states
 
         return output_tensor
 
@@ -973,17 +835,12 @@ class ResnetBlock2D(nn.Module):
 class TemporalResnetBlock(nn.Module):
     def __init__(self,
         in_channels: int,
-        out_channels = None,
+        out_channels: int,
         eps: float = 1e-6,
     ):
         super().__init__()
-        # in_channels = 512
-        # out_channels = 512
-        # eps = 1e-05
         
-        assert out_channels is not None
         self.in_channels = in_channels
-        out_channels = in_channels if out_channels is None else out_channels
         self.out_channels = out_channels
 
         kernel_size = (3, 1, 1)
@@ -1066,7 +923,7 @@ class SpatioTemporalResBlock(nn.Module):
 
     def forward(self,
         hidden_states,
-        image_only_indicator = None,
+        image_only_indicator,
     ):
         num_frames = image_only_indicator.shape[-1]
         hidden_states = self.spatial_res_block(hidden_states)
@@ -1085,7 +942,6 @@ class SpatioTemporalResBlock(nn.Module):
         hidden_states = self.time_mixer(
             x_spatial=hidden_states_mix,
             x_temporal=hidden_states,
-            image_only_indicator=image_only_indicator,
         )
 
         hidden_states = hidden_states.permute(0, 2, 1, 3, 4).reshape(batch_frames, channels, height, width)
@@ -1100,7 +956,6 @@ class AlphaBlender(nn.Module):
     def forward(self,
         x_spatial: torch.Tensor,
         x_temporal: torch.Tensor,
-        image_only_indicator = None,
     ):
         alpha = torch.sigmoid(self.mix_factor)
         alpha = alpha.to(x_spatial.dtype)

@@ -8,7 +8,6 @@ import torch.nn.functional as F
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import UNet2DConditionLoadersMixin
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 # from .vae import (
 #     # Downsample2D,
 #     # SpatioTemporalResBlock,
@@ -75,12 +74,12 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
         # time
         time_embed_dim = block_out_channels[0] * 4 # 1280
 
-        self.time_proj = Timesteps(block_out_channels[0], True, downscale_freq_shift=0)
+        self.time_proj = Timesteps(block_out_channels[0])
         timestep_input_dim = block_out_channels[0] # 320
 
         self.time_embedding = TimestepEmbedding(timestep_input_dim, time_embed_dim)
 
-        self.add_time_proj = Timesteps(addition_time_embed_dim, True, downscale_freq_shift=0)
+        self.add_time_proj = Timesteps(addition_time_embed_dim)
         self.add_embedding = TimestepEmbedding(projection_class_embeddings_input_dim, time_embed_dim)
 
         self.down_blocks = nn.ModuleList([])
@@ -366,35 +365,24 @@ class UNetSpatioTemporalConditionModel(ModelMixin, ConfigMixin, UNet2DConditionL
 def get_timestep_embedding(
     timesteps: torch.Tensor,
     embedding_dim: int,
-    flip_sin_to_cos: bool = False,
-    downscale_freq_shift: float = 1,
-    scale: float = 1,
     max_period: int = 10000,
 ):
-
     assert len(timesteps.shape) == 1, "Timesteps should be a 1d-array"
 
     half_dim = embedding_dim // 2
     exponent = -math.log(max_period) * torch.arange(
         start=0, end=half_dim, dtype=torch.float32, device=timesteps.device
     )
-    assert downscale_freq_shift == 0
-    exponent = exponent / (half_dim - downscale_freq_shift)
+    exponent = exponent / (half_dim)
 
     emb = torch.exp(exponent)
     emb = timesteps[:, None].float() * emb[None, :]
-
-    # scale embeddings
-    assert scale == 1
-    emb = scale * emb
 
     # concat sine and cosine embeddings
     emb = torch.cat([torch.sin(emb), torch.cos(emb)], dim=-1)
 
     # flip sine and cosine embeddings
-    assert flip_sin_to_cos == True
-    if flip_sin_to_cos:
-        emb = torch.cat([emb[:, half_dim:], emb[:, :half_dim]], dim=-1)
+    emb = torch.cat([emb[:, half_dim:], emb[:, :half_dim]], dim=-1)
 
     # zero pad
     if embedding_dim % 2 == 1:
@@ -403,24 +391,14 @@ def get_timestep_embedding(
 
 
 class Timesteps(nn.Module):
-    def __init__(self, num_channels: int, flip_sin_to_cos: bool, downscale_freq_shift: float, scale: int = 1):
+    def __init__(self, num_channels):
         super().__init__()
         self.num_channels = num_channels
-        self.flip_sin_to_cos = flip_sin_to_cos
-        self.downscale_freq_shift = downscale_freq_shift
-        self.scale = scale
-
-        assert self.flip_sin_to_cos == True
-        assert self.downscale_freq_shift == 0
-        assert self.scale == 1.0
 
     def forward(self, timesteps):
         t_emb = get_timestep_embedding(
             timesteps,
             self.num_channels,
-            flip_sin_to_cos=self.flip_sin_to_cos,
-            downscale_freq_shift=self.downscale_freq_shift,
-            scale=self.scale,
         )
         return t_emb
 
@@ -632,7 +610,7 @@ class TransformerSpatioTemporalModel(nn.Module):
         #   (act): SiLU()
         #   (linear_2): Linear(in_features=1280, out_features=320, bias=True)
         # )
-        self.time_proj = Timesteps(in_channels, True, 0)
+        self.time_proj = Timesteps(in_channels)
         self.time_mixer = AlphaBlender(alpha=0.5)
 
         # 4. Define output layers
@@ -746,23 +724,18 @@ class Attention(nn.Module):
         dim_head: int = 64,
         dropout: float = 0.0,
         bias: bool = False,
-        scale_qk: bool = True,
         processor = None,
     ):
         super().__init__()
+        self.head_size = heads # !!!
 
         self.hidden_size = dim_head * heads # hidden_size ???
         self.cross_attention_dim = cross_attention_dim if cross_attention_dim is not None else query_dim
         self.residual_connection = False
         self.out_dim = query_dim
 
-        self.scale_qk = scale_qk
-
-        assert self.scale_qk == True
         self.scale = dim_head**-0.5
-
         self.heads =  heads
-
         self.group_norm = None
         self.spatial_norm = None
 
@@ -784,9 +757,6 @@ class Attention(nn.Module):
         self.processor = processor
 
     def get_processor(self, return_deprecated_lora: bool = False) -> "AttentionProcessor":
-        r"""
-        Get the attention processor in use.
-        """
         assert return_deprecated_lora == True
         if not return_deprecated_lora: # False
             return self.processor
@@ -804,28 +774,16 @@ class Attention(nn.Module):
         )
 
     def batch_to_head_dim(self, tensor: torch.Tensor) -> torch.Tensor:
-        r"""
-        Reshape the tensor from `[batch_size, seq_len, dim]` to `[batch_size // heads, seq_len, dim * heads]`. `heads`
-        is the number of heads initialized while constructing the `Attention` class.
-        """
-        # self.heads == 5
-        head_size = self.heads
         batch_size, seq_len, dim = tensor.shape
-        tensor = tensor.reshape(batch_size // head_size, head_size, seq_len, dim)
-        tensor = tensor.permute(0, 2, 1, 3).reshape(batch_size // head_size, seq_len, dim * head_size)
+        tensor = tensor.reshape(batch_size // self.head_size, self.head_size, seq_len, dim)
+        tensor = tensor.permute(0, 2, 1, 3).reshape(batch_size // self.head_size, seq_len, dim * self.head_size)
         return tensor
 
     def head_to_batch_dim(self, tensor: torch.Tensor, out_dim: int = 3) -> torch.Tensor:
-        r"""
-        Reshape the tensor from `[batch_size, seq_len, dim]` to `[batch_size, seq_len, heads, dim // heads]` `heads` is
-        the number of heads initialized while constructing the `Attention` class.
-        """
-        head_size = self.heads
         batch_size, seq_len, dim = tensor.shape
-        extra_dim = 1
-        tensor = tensor.reshape(batch_size, seq_len * extra_dim, head_size, dim // head_size)
+        tensor = tensor.reshape(batch_size, seq_len, self.head_size, dim // self.head_size)
         tensor = tensor.permute(0, 2, 1, 3)
-        tensor = tensor.reshape(batch_size * head_size, seq_len * extra_dim, dim // head_size)
+        tensor = tensor.reshape(batch_size * self.head_size, seq_len, dim // self.head_size)
 
         return tensor
 
@@ -851,9 +809,6 @@ class Attention(nn.Module):
         )
         del baddbmm_input
 
-        # if self.upcast_softmax:
-        #     attention_scores = attention_scores.float()
-
         attention_probs = attention_scores.softmax(dim=-1)
         del attention_scores
 
@@ -864,10 +819,6 @@ class Attention(nn.Module):
     def prepare_attention_mask(
         self, attention_mask: torch.Tensor, target_length: int, batch_size: int, out_dim: int = 3
     ) -> torch.Tensor:
-        r"""
-        Prepare the attention mask for the attention computation.
-
-        """
         # head_size = self.heads
         assert attention_mask == None
         return attention_mask
@@ -884,7 +835,7 @@ class FeedForward(nn.Module):
         hidden_size = int(dim * mult) # 1280
         dim_out = dim_out if dim_out is not None else dim
 
-        act_fn = GEGLU(dim, hidden_size, bias=True)
+        act_fn = GEGLU(dim, hidden_size)
         self.net = nn.ModuleList([])
         self.net.append(act_fn)
         self.net.append(nn.Dropout(dropout))
@@ -900,8 +851,6 @@ class FeedForward(nn.Module):
         #     (2): Linear(in_features=1280, out_features=320, bias=True)
         #   )
         # )
-
-
     def forward(self, hidden_states):
         for module in self.net:
             hidden_states = module(hidden_states)
@@ -911,9 +860,9 @@ class GEGLU(nn.Module):
     r"""
     A [variant](https://arxiv.org/abs/2002.05202) of the gated linear unit activation function.
     """
-    def __init__(self, dim_in=320, dim_out=1280, bias = True):
+    def __init__(self, dim_in=320, dim_out=1280):
         super().__init__()
-        self.proj = nn.Linear(dim_in, dim_out * 2, bias=bias)
+        self.proj = nn.Linear(dim_in, dim_out * 2, bias=True)
 
     def forward(self, hidden_states):
         hidden_states = self.proj(hidden_states)
@@ -940,9 +889,6 @@ class TemporalBasicTransformerBlock(nn.Module):
         super().__init__()
 
         assert cross_attention_dim is not None
-        self.is_res = dim == time_mix_inner_dim
-        assert self.is_res == True
-
         self.norm_in = nn.LayerNorm(dim)
 
         # Define 3 blocks. Each block has its own normalization layer.
@@ -1028,11 +974,8 @@ def get_down_block(
     use_linear_projection: bool = True,
     only_cross_attention: bool = False,
     upcast_attention: bool = False,
-    resnet_time_scale_shift: str = "default",
-    temporal_num_attention_heads: int = 8,
     temporal_max_seq_length: int = 32,
     transformer_layers_per_block = 1,
-    temporal_transformer_layers_per_block = 1,
     dropout: float = 0.0,
 ):
     # down_block_type = 'CrossAttnDownBlockSpatioTemporal'
@@ -1051,11 +994,8 @@ def get_down_block(
     # use_linear_projection = True
     # only_cross_attention = False
     # upcast_attention = False
-    # resnet_time_scale_shift = 'default'
-    # temporal_num_attention_heads = 8
     # temporal_max_seq_length = 32
     # transformer_layers_per_block = 1
-    # temporal_transformer_layers_per_block = 1
     # dropout = 0.0
     # # down_block_types --
     #     ['CrossAttnDownBlockSpatioTemporal', 'CrossAttnDownBlockSpatioTemporal', 
@@ -1105,12 +1045,9 @@ def get_up_block(
     use_linear_projection: bool = True,
     only_cross_attention: bool = False,
     upcast_attention: bool = False,
-    resnet_time_scale_shift: str = "default",
-    temporal_num_attention_heads: int = 8,
     temporal_cross_attention_dim = None,
     temporal_max_seq_length: int = 32,
     transformer_layers_per_block = 1,
-    temporal_transformer_layers_per_block = 1,
     dropout: float = 0.0,
 ):
     #     ['UpBlockSpatioTemporal', 'CrossAttnUpBlockSpatioTemporal', 
@@ -1152,7 +1089,7 @@ class UNetMidBlockSpatioTemporal(nn.Module):
         num_layers = 1,
         transformer_layers_per_block = 1,
         num_attention_heads: int = 1,
-        cross_attention_dim: int = 1280,
+        cross_attention_dim: int = 1024,
     ):
         super().__init__()
         # in_channels = 1280
@@ -1282,7 +1219,7 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
         num_layers = 2,
         transformer_layers_per_block = 1,
         num_attention_heads: int = 1,
-        cross_attention_dim: int = 1280,
+        cross_attention_dim: int = 1024,
         add_downsample: bool = True,
     ):
         super().__init__()
@@ -1327,7 +1264,6 @@ class CrossAttnDownBlockSpatioTemporal(nn.Module):
         [
                 Downsample2D(
                 out_channels,
-                use_conv=True,
                 out_channels=out_channels,
                 # padding=1,
                 name="op",
@@ -1393,7 +1329,7 @@ class UpBlockSpatioTemporal(nn.Module):
                 )
             )
         self.resnets = nn.ModuleList(resnets)
-        self.upsamplers = nn.ModuleList([Upsample2D(out_channels, use_conv=True, out_channels=out_channels)])
+        self.upsamplers = nn.ModuleList([Upsample2D(out_channels, out_channels=out_channels)])
         self.gradient_checkpointing = False
 
     def forward(self,
@@ -1431,7 +1367,7 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
         transformer_layers_per_block = 1,
         resnet_eps: float = 1e-6,
         num_attention_heads: int = 1,
-        cross_attention_dim: int = 1280,
+        cross_attention_dim: int = 1024,
         add_upsample: bool = True,
     ):
         super().__init__()
@@ -1474,12 +1410,11 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
 
         # assert add_downsample == True
         if add_upsample:
-            self.upsamplers = nn.ModuleList([Upsample2D(out_channels, use_conv=True, out_channels=out_channels)])
+            self.upsamplers = nn.ModuleList([Upsample2D(out_channels, out_channels=out_channels)])
         else:
             self.upsamplers = None
 
         self.gradient_checkpointing = False
-        # self.resolution_idx = resolution_idx
         # pdb.set_trace()
 
     def forward(self,
@@ -1523,19 +1458,15 @@ class CrossAttnUpBlockSpatioTemporal(nn.Module):
 class Downsample2D(nn.Module):
     """A 2D downsampling layer with an optional convolution.
                         out_channels,
-                        use_conv=True,
                         out_channels=out_channels,
                         name="op",
     """
     def __init__(self,
         channels: int,
-        use_conv: bool = True,
         out_channels = None,
         name: str = "conv",
     ):
         super().__init__()
-        assert use_conv == True
-
         self.channels = channels # !!!
         out_channels = out_channels or channels
 
@@ -1839,21 +1770,12 @@ class TemporalResnetBlock(nn.Module):
 class Upsample2D(nn.Module):
     def __init__(self,
         channels = 1280,
-        use_conv: bool = True,
         out_channels = 1280,
     ):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
-        self.use_conv = use_conv
-
-        assert use_conv == True
-        if use_conv:
-            conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, padding=1, bias=True)
-        else:
-            conv = None
-
-        self.conv = conv
+        self.conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, padding=1, bias=True)
 
 
     def forward(self, hidden_states: torch.Tensor, output_size= None):
@@ -1881,9 +1803,7 @@ class Upsample2D(nn.Module):
         if dtype == torch.bfloat16:
             hidden_states = hidden_states.to(dtype)
 
-        # TODO(Suraj, Patrick) - clean up after weight dicts are correctly renamed
-        if self.use_conv: # True
-            hidden_states = self.conv(hidden_states)
+        hidden_states = self.conv(hidden_states)
 
         return hidden_states
 
@@ -1932,12 +1852,8 @@ class XFormersAttnProcessor:
         return hidden_states
 
 class AnimationAttnProcessor(nn.Module):
-    def __init__(self,
-        hidden_size=320,
-        ):
+    def __init__(self, hidden_size=320):
         super().__init__()
-        if not hasattr(F, "scaled_dot_product_attention"):
-            raise ImportError("AttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
         self.hidden_size = hidden_size
 
     def __call__(self,
@@ -1977,7 +1893,6 @@ class AnimationAttnProcessor(nn.Module):
         key = attn.head_to_batch_dim(key).contiguous()
         value = attn.head_to_batch_dim(value).contiguous()
 
-        # assert attention_mask == None
         if is_xformers_available(): # True
             ### xformers
             hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=None)
@@ -2022,12 +1937,9 @@ class AnimationIDAttnNormalizedProcessor(nn.Module):
             attn,
             hidden_states,
             encoder_hidden_states=None,
-            # attention_mask=None,
     ):
         # tensor [hidden_states] size: [16, 4096, 320], min: -1.165039, max: 1.260742, mean: 0.035343
         # tensor [encoder_hidden_states] size: [16, 5, 1024], min: -14.492188, max: 14.453125, mean: 0.000888
-        # [attention_mask] type: <class 'NoneType'>
-
 
         # (Pdb) attn
         # Attention(
