@@ -188,12 +188,10 @@ class UNetSpatioTemporalConditionModel(nn.Module):
         timesteps = timesteps.expand(batch_size)
 
         t_emb = self.time_proj(timesteps)
-        t_emb = t_emb.to(dtype=sample.dtype)
         emb = self.time_embedding(t_emb)
 
         time_embeds = self.add_time_proj(added_time_ids.flatten())
         time_embeds = time_embeds.reshape((batch_size, -1))
-        time_embeds = time_embeds.to(emb.dtype)
         aug_emb = self.add_embedding(time_embeds)
         emb = emb + aug_emb
 
@@ -559,12 +557,6 @@ class TransformerSpatioTemporalModel(nn.Module):
         num_frames_emb = num_frames_emb.repeat(batch_size, 1)
         num_frames_emb = num_frames_emb.reshape(-1)
         t_emb = self.time_proj(num_frames_emb)
-
-        # `Timesteps` does not contain any weights and will always return f32 tensors
-        # but time_embedding might actually be running in fp16. so we need to cast here.
-        # there might be better ways to encapsulate this.
-        t_emb = t_emb.to(dtype=hidden_states.dtype)
-
         emb = self.time_pos_embed(t_emb)
         emb = emb[:, None, :]
 
@@ -1177,8 +1169,8 @@ class SpatioTemporalResBlock(nn.Module):
         )
 
         self.temporal_res_block = TemporalResnetBlock(
-            in_channels=out_channels,  # if out_channels is not None else in_channels,
-            out_channels=out_channels,  # if out_channels is not None else in_channels,
+            in_channels=out_channels,
+            out_channels=out_channels, 
             temb_channels=temb_channels,
             eps=eps,
         )
@@ -1237,8 +1229,6 @@ class ResnetBlock2D(nn.Module):
         super().__init__()
 
         self.in_channels = in_channels
-        out_channels = in_channels if out_channels is None else out_channels
-        self.out_channels = out_channels
 
         self.norm1 = nn.GroupNorm(num_groups=groups, num_channels=in_channels, eps=eps, affine=True)
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1)
@@ -1314,8 +1304,6 @@ class TemporalResnetBlock(nn.Module):
         # eps = 1e-05
 
         self.in_channels = in_channels
-        out_channels = in_channels if out_channels is None else out_channels
-        self.out_channels = out_channels
 
         kernel_size = (3, 1, 1)
         padding = [k // 2 for k in kernel_size]
@@ -1395,33 +1383,16 @@ class Upsample2D(nn.Module):
     ):
         super().__init__()
         self.channels = channels
-        self.out_channels = out_channels or channels
-        self.conv = nn.Conv2d(self.channels, self.out_channels, kernel_size=3, padding=1, bias=True)
+        self.conv = nn.Conv2d(self.channels, out_channels, kernel_size=3, padding=1, bias=True)
 
-    def forward(self, hidden_states, output_size=None):
+    def forward(self, hidden_states):
         assert hidden_states.shape[1] == self.channels
-
-        # Cast to float32 to as 'upsample_nearest2d_out_frame' op does not support bfloat16
-        # TODO(Suraj): Remove this cast once the issue is fixed in PyTorch
-        # https://github.com/pytorch/pytorch/issues/86679
-        dtype = hidden_states.dtype
-        if dtype == torch.bfloat16:
-            hidden_states = hidden_states.to(torch.float32)
 
         # upsample_nearest_nhwc fails with large batch sizes. see https://github.com/huggingface/diffusers/issues/984
         if hidden_states.shape[0] >= 64:
             hidden_states = hidden_states.contiguous()
 
-        # if `output_size` is passed we force the interpolation output
-        # size and do not make use of `scale_factor=2`
-        if output_size is None:
-            hidden_states = F.interpolate(hidden_states, scale_factor=2.0, mode="nearest")
-        else:
-            hidden_states = F.interpolate(hidden_states, size=output_size, mode="nearest")
-
-        # If the input is bfloat16, we cast back to bfloat16
-        if dtype == torch.bfloat16:
-            hidden_states = hidden_states.to(dtype)
+        hidden_states = F.interpolate(hidden_states, scale_factor=2.0, mode="nearest")
 
         hidden_states = self.conv(hidden_states)
 
@@ -1485,9 +1456,7 @@ class TemporalAttention(nn.Module):
             hidden_states = F.scaled_dot_product_attention(
                 query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False
             )
-        hidden_states = hidden_states.to(query.dtype)
 
-        hidden_states = hidden_states.to(query.dtype)
         hidden_states = self.batch_to_head_dim(hidden_states)
 
         # linear proj
@@ -1581,7 +1550,6 @@ class AnimationAttention(nn.Module):
 
         if is_xformers_available():
             hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=None)
-            hidden_states = hidden_states.to(query.dtype)
         else:
             attention_probs = self.get_attention_scores(query, key, None)
             hidden_states = torch.bmm(attention_probs, value)
@@ -1611,7 +1579,6 @@ class AnimationAttention(nn.Module):
         return tensor
 
     def get_attention_scores(self, query, key, attention_mask=None):
-        dtype = query.dtype
 
         if attention_mask is None:
             baddbmm_input = torch.empty(
@@ -1635,7 +1602,6 @@ class AnimationAttention(nn.Module):
         attention_probs = attention_scores.softmax(dim=-1)
         del attention_scores
 
-        attention_probs = attention_probs.to(dtype)
 
         return attention_probs
 
@@ -1712,7 +1678,6 @@ class AnimationIDAttention(nn.Module):
         residual = hidden_states
 
         query = self.to_q(hidden_states)
-        encoder_hidden_states = encoder_hidden_states.to(hidden_states.dtype)
 
         end_pos = encoder_hidden_states.shape[1] - self.num_tokens
         encoder_hidden_states, ip_hidden_states = (
@@ -1730,17 +1695,12 @@ class AnimationIDAttention(nn.Module):
         key = self.head_to_batch_dim(key).contiguous()
         value = self.head_to_batch_dim(value).contiguous()
 
-        key = key.to(query.dtype)
-        value = value.to(query.dtype)
-
         if is_xformers_available():
             hidden_states = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=None)
-            hidden_states = hidden_states.to(query.dtype)
         else:
             hidden_states = F.scaled_dot_product_attention(
                 query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False
             )
-            hidden_states = hidden_states.to(query.dtype)
 
         hidden_states = self.batch_to_head_dim(hidden_states)
 
@@ -1749,17 +1709,13 @@ class AnimationIDAttention(nn.Module):
 
         ip_key = self.head_to_batch_dim(ip_key).contiguous()
         ip_value = self.head_to_batch_dim(ip_value).contiguous()
-        ip_key = ip_key.to(query.dtype)
-        ip_value = ip_value.to(query.dtype)
 
         if is_xformers_available():
             ip_hidden_states = xformers.ops.memory_efficient_attention(query, ip_key, ip_value, attn_bias=None)
-            ip_hidden_states = ip_hidden_states.to(query.dtype)
         else:
             ip_hidden_states = F.scaled_dot_product_attention(
                 query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False
             )
-            ip_hidden_states = ip_hidden_states.to(query.dtype)
 
         ip_hidden_states = self.batch_to_head_dim(ip_hidden_states)
         mean_latents, std_latents = torch.mean(hidden_states, dim=(1, 2), keepdim=True), torch.std(

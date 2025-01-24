@@ -68,8 +68,7 @@ class AutoencoderKLTemporalDecoder(nn.Module):
         batch_size = z.shape[0] // num_frames
 
         # xxxx_debug !!!
-        image_only_indicator = torch.zeros(batch_size, num_frames, dtype=z.dtype, device=z.device)
-        decoded = self.decoder(z, num_frames=num_frames, image_only_indicator=image_only_indicator)
+        decoded = self.decoder(z, num_frames=num_frames)
         # tensor [decoded] size: [4, 3, 512, 512], min: -1.092773, max: 1.15332, mean: -0.015342
 
         return decoded
@@ -300,21 +299,20 @@ class TemporalDecoder(nn.Module):
             in_channels=out_channels, out_channels=out_channels, kernel_size=out_kernel_size, padding=padding
         )
 
-    def forward(self, sample, image_only_indicator, num_frames=1):
+    def forward(self, sample, num_frames=1):
         # tensor [sample] size: [4, 4, 64, 64], min: -3.986736, max: 4.073826, mean: 0.00144
-        # tensor [image_only_indicator] size: [1, 4], min: 0.0, max: 0.0, mean: 0.0
         # [num_frames] value: '4'
 
         sample = self.conv_in(sample)
 
         upscale_dtype = next(iter(self.up_blocks.parameters())).dtype
         # middle
-        sample = self.mid_block(sample, image_only_indicator=image_only_indicator)
+        sample = self.mid_block(sample)
         sample = sample.to(upscale_dtype)
 
         # up
         for up_block in self.up_blocks:
-            sample = up_block(sample, image_only_indicator=image_only_indicator)
+            sample = up_block(sample)
 
         # post-process
         sample = self.conv_norm_out(sample)
@@ -410,19 +408,12 @@ class MidBlockTemporalDecoder(nn.Module):
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
 
-    def forward(self, hidden_states, image_only_indicator):
+    def forward(self, hidden_states):
         # tensor [hidden_states] size: [4, 512, 64, 64], min: -2.799238, max: 2.383698, mean: 0.012568
-        # tensor [image_only_indicator] size: [1, 4], min: 0.0, max: 0.0, mean: 0.0
-        hidden_states = self.resnets[0](
-            hidden_states,
-            image_only_indicator=image_only_indicator,
-        )
+        hidden_states = self.resnets[0](hidden_states)
         for resnet, attn in zip(self.resnets[1:], self.attentions):
             hidden_states = attn(hidden_states)
-            hidden_states = resnet(
-                hidden_states,
-                image_only_indicator=image_only_indicator,
-            )
+            hidden_states = resnet(hidden_states)
         # tensor [hidden_states] size: [4, 512, 64, 64], min: -7.462655, max: 6.545697, mean: 0.0344
 
         return hidden_states
@@ -451,11 +442,10 @@ class UpBlockTemporalDecoder(nn.Module):
         else:
             self.upsamplers = None
 
-    def forward(self, hidden_states, image_only_indicator):
+    def forward(self, hidden_states):
         # tensor [hidden_states] size: [4, 256, 512, 512], min: -1035.322632, max: 813.782288, mean: -2.003695
-        # tensor [image_only_indicator] size: [1, 4], min: 0.0, max: 0.0, mean: 0.0
         for resnet in self.resnets:
-            hidden_states = resnet(hidden_states, image_only_indicator=image_only_indicator)
+            hidden_states = resnet(hidden_states)
 
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
@@ -524,32 +514,19 @@ class Upsample2D(nn.Module):
         self.channels = channels
         self.conv = nn.Conv2d(self.channels, out_channels, kernel_size=3, padding=1, bias=True)
 
-    def forward(self, hidden_states, output_size=None):
-        assert hidden_states.shape[1] == self.channels
+    def forward(self, hidden_states):
+        # tensor [hidden_states] size: [4, 512, 64, 64], min: -10.003574, max: 9.841689, mean: -0.069837
 
-        # Cast to float32 to as 'upsample_nearest2d_out_frame' op does not support bfloat16
-        # TODO(Suraj): Remove this cast once the issue is fixed in PyTorch
-        # https://github.com/pytorch/pytorch/issues/86679
-        dtype = hidden_states.dtype
-        if dtype == torch.bfloat16:
-            hidden_states = hidden_states.to(torch.float32)
+        assert hidden_states.shape[1] == self.channels
 
         # upsample_nearest_nhwc fails with large batch sizes. see https://github.com/huggingface/diffusers/issues/984
         if hidden_states.shape[0] >= 64:
             hidden_states = hidden_states.contiguous()
 
-        # if `output_size` is passed we force the interpolation output
-        # size and do not make use of `scale_factor=2`
-        if output_size is None:
-            hidden_states = F.interpolate(hidden_states, scale_factor=2.0, mode="nearest")
-        else:
-            hidden_states = F.interpolate(hidden_states, size=output_size, mode="nearest")
-
-        # If the input is bfloat16, we cast back to bfloat16
-        if dtype == torch.bfloat16:
-            hidden_states = hidden_states.to(dtype)
+        hidden_states = F.interpolate(hidden_states, scale_factor=2.0, mode="nearest")
 
         hidden_states = self.conv(hidden_states)
+        # tensor [hidden_states] size: [4, 512, 128, 128], min: -40.760952, max: 51.496639, mean: 0.650787
 
         return hidden_states
 
@@ -573,6 +550,8 @@ class ResnetBlock2D(nn.Module):
             self.conv_shortcut = None
 
     def forward(self, input_tensor):
+        # tensor [input_tensor] size: [4, 512, 256, 256], min: -240.69487, max: 187.305008, mean: -0.531526
+
         hidden_states = input_tensor
         hidden_states = self.norm1(hidden_states)
         hidden_states = self.nonlinearity(hidden_states)
@@ -587,6 +566,7 @@ class ResnetBlock2D(nn.Module):
 
         output_tensor = input_tensor + hidden_states
 
+        # tensor [output_tensor] size: [4, 256, 256, 256], min: -171.99231, max: 66.811272, mean: 0.563775
         return output_tensor
 
 
@@ -646,11 +626,10 @@ class SpatioTemporalResBlock(nn.Module):
         self.temporal_res_block = TemporalResnetBlock(in_channels=out_channels, out_channels=out_channels)
         self.time_mixer = AlphaBlender(alpha=merge_factor)
 
-    def forward(self, hidden_states, image_only_indicator):
+    def forward(self, hidden_states):
         # tensor [hidden_states] size: [4, 128, 512, 512], min: -2456.013672, max: 2166.745117, mean: -12.363848
-        # tensor [image_only_indicator] size: [1, 4], min: 0.0, max: 0.0, mean: 0.0
 
-        num_frames = image_only_indicator.shape[-1]
+        num_frames = hidden_states.shape[0]
         hidden_states = self.spatial_res_block(hidden_states)
 
         batch_frames, channels, height, width = hidden_states.shape
